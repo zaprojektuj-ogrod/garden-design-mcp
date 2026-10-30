@@ -1,0 +1,63 @@
+{
+  "name": "@zaprojektujogrod/mcp-server",
+  "version": "2.9.2",
+  "description": "MCP server for Garden Editor — AI-assisted garden design via Claude, Cursor, or any MCP client",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "garden-editor-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist/",
+    "agent-prompt.md",
+    "agent-instructions.md",
+    "mcp-instructions.md",
+    "mcp-note.md",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "model-context-protocol",
+    "garden",
+    "garden-design",
+    "garden-planner",
+    "landscape",
+    "landscape-design",
+    "design",
+    "3d",
+    "ai",
+    "ai-agent",
+    "claude",
+    "ogrod",
+    "projektowanie-ogrodow"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zaprojektuj-ogrod/garden-design-mcp.git"
+  },
+  "homepage": "https://www.zaprojektuj-ogrod.pl/en/help/mcp-setup/",
+  "bugs": {
+    "url": "https://www.zaprojektuj-ogrod.pl/kontakt/"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "ws": "^8.16.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/ws": "^8.5.10",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  }
+}

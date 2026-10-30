@@ -1,0 +1,25 @@
+# Publishes @zaprojektujogrod/mcp-server to npm via trusted publishing (OIDC) — no npm token.
+# npm attaches provenance, as this repository is public.
+# Run by hand (Actions › Publish to npm › Run workflow) after the Garden Editor is deployed,
+# because changes to the bridge need the deployed editor first.
+# This repository is a mirror of mcp-server/ in the Garden Editor's own repository.
+name: Publish to npm
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write  # OIDC token for npm trusted publishing
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24  # ships npm 11.5+, required for trusted publishing
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: npm publish --access public  # prepublishOnly builds
