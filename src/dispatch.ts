@@ -50,6 +50,7 @@ export const DESIGN_GUIDE_TOOL = {
 // a residential parcel — so 3 minutes gives comfortable headroom.
 const TOOL_TIMEOUTS_MS: Record<string, number> = {
   import_buildings: 180000,
+  save: 180000,
 };
 
 // ── Zone geometry helpers (over the browser's raw state) ──

@@ -1,6 +1,6 @@
 {
   "name": "@zaprojektujogrod/mcp-server",
-  "version": "2.9.2",
+  "version": "2.9.3",
   "description": "MCP server for Garden Editor — AI-assisted garden design via Claude, Cursor, or any MCP client",
   "type": "module",
   "main": "dist/index.js",
