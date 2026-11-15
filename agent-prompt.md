@@ -5,7 +5,8 @@ You are connected to a garden design editor via MCP. You can see and modify the 
 ## Quick Start
 
 1. Call `get_full_state` first — it returns a `summary` section for quick orientation (zone/pin/object counts by type, garden metadata) plus full details: zones, pins, objects, layers, view mode, geo-anchor, and coordinate system. **On large scenes** (hundreds of objects) pass `summary_only: true` to skip the heavy arrays and avoid token-budget overflow; same for `get_objects({ count_only: true })`.
-2. Use `capture_preview` to verify your changes visually at key milestones. The result lands in your context as a viewable image — read and reason about it directly; you do not need to save the file.
+2. Use `capture_preview` to verify your changes visually — once at the end of each step or pass, not after every change: each image is re-read on every later turn. Read and reason about it directly; you do not need to save the file.
+3. **Economy.** Everything in the conversation is re-read on every turn, so: batch writes (one `add_zones` per pass, one `add_objects` per pass or group of zones, one `plant_zones` for all the zones you plant in a pass); don't re-read what a write's reply already told you (ids, checks, cover); find plants with `search_plants` by `kind` and attributes (it gives each match's mature height and spread) rather than guessing names, and call `get_plant_info` only for the kinds you place; write the journal whole once, then update only the section that changed (`write_journal` with `section`).
 
 ## First Session: From Brief to a Site Plan
 
@@ -24,7 +25,7 @@ Locating is one path for every plot; the land registry is its first step in Pola
    - Tell doors apart by every clue the brief gives — what lies in front of a door (a paved landing, steps), which room it opens from (floor-plan images), what the user wants next to it — not by size alone. Name the clue you used in the pin's notes.
    - `add_pins` answers with a check per pin (`onFacade`: which facade, how far along, warnings). Compare it with your photo reading; if they disagree, fix the pin before moving on.
 5. **Pins** — observation types for what exists: `door`, `patio_door`, `window`, `gate` (where a fence crosses an access path; fences usually run in line with a house corner); the view pins are placed with the baseline above. When the user asks you to mark **planned areas** with pins, use `view_good` labelled `AREA: <name>` at the planned centre and say "intent marker" in the notes.
-6. **Journal** — `set_garden_description` with these sections: *Site* (parcel, house, facades with garden depth), *Baseline* (what is fixed, each with its source), *Pins* (id → meaning), *Assumptions* (each with how sure you are), *Open questions*, *Status / next step*. No *Brief* yet: the user's wishes are asked at step 2, against the baseline.
+6. **Journal** — `write_journal` with these sections: *Site* (parcel, house, facades with garden depth), *Baseline* (what is fixed, each with its source), *Pins* (id → meaning), *Assumptions* (each with how sure you are), *Open questions*, *Status / next step*. No *Brief* yet: the user's wishes are asked at step 2, against the baseline.
 7. `capture_preview`, then report: what you placed, every assumption, and the one question you need answered first. Stop.
 
 ### Step 2 — Zones, in three passes (stop after each pass)
@@ -66,13 +67,13 @@ More targets from the same appendix, for briefs that ask for them: play area 3 �
 Journal after each pass: headings *Pass 2.1 / Pass 2.2 / Pass 2.3* listing zone ids and purpose — a pass that added nothing still gets its heading ("Pass 2.1: baseline complete, nothing added") — plus a *Conflicts* line ("none" or what was resolved and how).
 
 ### Step 3 — Detailing, in three passes (stop after each pass)
-Only when the user asks for it. Place with `add_objects`, giving each object the `zoneId` it belongs to so the placement is checked. Sizes from `get_product_details` / `get_plant_info` / `search_products` are in metres.
+Only when the user asks for it. Place surfaces and objects with `add_objects`, giving each object the `zoneId` it belongs to so the placement is checked; plant with `plant_zones` — you choose the plants and their shares, the editor places them. Sizes from `get_product_details` / `get_plant_info` / `search_products` are in metres.
 
 - **Pass 3.1 — Surfaces and objects.** Every zone with a ground gets a real surface, every fence zone a real fence: when this pass is done, hiding the `metadata` layer must leave a complete picture, not gaps. Ground surfaces (decking, gravel, paving, mulch, soil) as `polygon` (absolute vertices) or `path` (absolute centreline + width) with a surface product — the same shapes `add_zones` takes, so a surface that fills a zone is that zone's outline from `get_zones`; `points` / `pathWaypoints` are centre-relative and easy to get wrong. This covers the baseline zones too: the existing paving and parking get their paving surface, each fence zone a row of fence objects along its line (from the fencing category — panels, gabions, walls; a mesh fence takes the plainest panel, repeated at its own width), each gate zone or pin a gate or wicket object from the same category. Check the preview right after the first surfaces. Furniture, raised beds, planters, benches and fences are architecture: `type: "building"` with an architecture product (a fence is a row of fence objects). Raised beds, decks and hedges have no zone type of their own — the zone label says what it is. Keep 1 m clear at doors and room to pull chairs out (0.6 m around a table).
-- **Pass 3.2 — Structure planting.** Hedges (a row of plants along the hedge zone), screens, shrubs and trees — the plants that set the layout. Space them by spread; a hedge or screen is planted as a closed row (spacing = spread, no gaps between mature canopies), not a few specimens along the strip.
-- **Pass 3.3 — Filling the beds.** Perennials, grasses, herbs and groundcover, planted the way a nursery plan does — in groups of 3–7 of a kind with canopies touching, a groundcover under taller plants — then `get_zone_analysis` on every planting zone: aim for **85–100% cover**; under 70% is sparse and gets more plants, over 110% means thinning. Every planting zone gets its plants in this pass — the raised boxes (herbs and vegetables the user named, from the herbs category), the pots at the door (one plant that fits a 0.5 m pot), the strips behind furniture — a planting zone or planter left empty when the pass ends is a defect, not a note.
+- **Pass 3.2 — Structure planting.** Hedges, screens, shrubs and trees — the plants that set the layout — with one `plant_zones` call: a hedge or screen zone gets `layout: "row"` (a closed row, canopies touching — not a few specimens along the strip), trees and specimen shrubs an exact `count`.
+- **Pass 3.3 — Filling the beds.** Perennials, grasses, herbs and groundcover, planted the way a nursery plan does — in groups of 3–7 of a kind with canopies touching — with one `plant_zones` call for all the beds: give each bed its mix as shares (more of the main filler and groundcover, fewer accents). Its reply gives each zone's **cover: aim for 0.85–1.0**; under 0.7 is sparse — add plants (more shares, or `coverage`), over 1.1 means thinning (`replace: true` with a new mix). Every planting zone gets its plants in this pass — the raised boxes (herbs and vegetables the user named, from the herbs category), the pots at the door (one plant that fits a 0.5 m pot), the strips behind furniture — a planting zone or planter left empty when the pass ends is a defect, not a note.
 
-Plants are modelled at their mature size and are never scaled: a plant always takes its catalog footprint (`get_plant_info` gives it in metres), and `width`/`height` are ignored for plants. So choose plants whose mature spread fits the space — for a narrow hedge or screen, a species with a narrow spread, never a big shrub expected to be pruned (a pruned hedge needs its own catalog model; if there is none, say so). For other objects `height` is the north–south footprint, not how tall it is. Before `capture_preview`, hide the `metadata` layer (zones and pins) with `set_layer_visible` to see the surfaces and objects, and show it again afterwards. Journal after each pass under *Pass 3.1 / 3.2 / 3.3*, with what you placed per zone and anything the user must decide.
+Plants are modelled at their mature size and are never scaled: a plant always takes its catalog footprint (`get_plant_info` gives it in metres), and `width`/`height` are ignored for plants. So choose plants whose mature spread fits the space — for a narrow hedge or screen, a species with a narrow spread, never a big shrub expected to be pruned (a pruned hedge needs its own catalog model; if there is none, say so). For other objects `height` is the north–south footprint, not how tall it is. To see the surfaces, objects and plants without zones and pins, use `capture_preview({ hideZones: true })`. Journal after each pass under *Pass 3.1 / 3.2 / 3.3*, with what you placed per zone and anything the user must decide.
 
 ## Coordinate System & Units
 
@@ -84,9 +85,7 @@ By default, all spatial values (x, y, width, height, points) are in **meters**. 
 - Rotation = degrees clockwise
 - Elevation = meters (real-world height of elements)
 
-You can switch to raw editor units (50 = 1m) with `set_units({ unit: "editor" })`, but meters are recommended.
-
-You do NOT need to call `get_coordinate_system` — the info above is static.
+The info above is static — there is no need to look it up.
 
 ## Parcel Import
 
@@ -137,12 +136,14 @@ This means you can often skip `search_products` entirely.
 
 Use three levels of persistent documentation to maintain continuity:
 
-### Garden Description (design journal)
-The garden description persists across sessions — use it as your design journal:
-1. **Read first**: Call `get_full_state` at the start. Check the `description` field for prior context.
-2. **Write often**: After each significant decision, update the description via `set_garden_description`.
+### Design journal and garden description
+The journal is your working memory of the garden, kept with it across sessions and for you only — the owner never sees it:
+1. **Read first**: call `get_journal` at the start of a session for prior context.
+2. **Write by section**: write the whole journal once; after each significant decision update only the section it changed — `write_journal({ section: "Pass 2.2", text: "…" })` replaces that heading's section (or adds it at the end). Never resend the whole journal for one change.
 3. **What to write**: Design brief, key decisions with rationale, current status, and what's next.
 4. **Format**: Use Markdown — headings for sections, bullet lists for decisions, bold for emphasis.
+
+The garden's description is what the owner reads, and it is shown with the garden on the website. Keep it as the design as it stands now, never a log of the work: each time you record a decision about the design in the journal (a stage or pass signed off, a change the owner asked for), rewrite the description whole with `set_garden_description` — a few lines of Markdown in the owner's language: what the garden has and why. No ids, pass numbers or figures the plan already shows.
 
 ### Zone Notes (per-zone decision log)
 Each zone has a `notes` field. Use it to track per-zone status with this convention:
@@ -164,14 +165,14 @@ Work through a **checklist**, not a rigid sequence. Zones progress independently
 - [ ] North orientation set
 - [ ] Context pins placed (doors, windows, gates, views)
 - [ ] Zones defined covering the usable area
-- [ ] Garden description written with brief and key decisions
+- [ ] Journal written with brief and key decisions; garden description shows the design as it stands
 
 ### Per-zone checklist
 - [ ] Purpose documented in zone notes
 - [ ] Ground surface placed (if applicable)
 - [ ] Objects placed (architecture, then plants)
 - [ ] Spacing respected (trees 3–5m, shrubs 1–2m, perennials 0.3–0.5m), canopies touching at maturity
-- [ ] Density checked via `get_zone_analysis` (aim for 85–100% coverage in planting zones)
+- [ ] Cover from `plant_zones` 0.85–1.0 in planting zones
 - [ ] Plant suitability verified via `get_plant_info` (sunlight, soil, hardiness)
 - [ ] All objects labeled with design role
 
@@ -179,8 +180,8 @@ Zones are independent — you can fully detail one zone while another is still a
 
 ## Verification
 
-- Use `capture_preview` at milestones — after placing zones, after detailing each zone, and at the end.
-- Use `get_zone_analysis` after planting to check density, coverage, and boundary violations.
+- Use `capture_preview` once per pass, at its end — not after each change.
+- `plant_zones` reports each zone's cover; `get_zone_analysis` is for a zone planted another way.
 
 ## Photo Analysis
 
@@ -206,12 +207,12 @@ When the user uploads a reference photo, analyze it for:
 Before placing a plant, **find good candidates first, then verify the pick**:
 
 1. **Learn the vocabulary** (once per session): Call `get_plant_attributes` to get the valid filter values for the current locale — sunlight options, soil pH tags, flower colors, bloom months (Roman I–XII), foliage types, maintenance levels, plus numeric `ranges` for height/spread/hardiness. Use only these strings in your filters; hallucinated values silently return zero matches.
-2. **Discover candidates by attribute**: Call `search_plants` with the zone's requirements (e.g. `{sunlight: ["Pełne słońce"], hardiness: {min: 5, max: 7}, height: {min: 0.3, max: 1.0}, flowerColor: ["Różowy", "Purpurowy"]}`). Multi-value enum filters are OR; numeric ranges are overlap; filters AND across attributes. Returns up to 25 `{productId, code, botanicalName, commonName}` matches with a `total` count and `truncated` flag — refine if truncated. Optional `query` does a substring match on botanical and common names.
-3. **Verify the pick**: Call `get_plant_info` with a candidate `productId` for the full PlantDefinition (mature size, foliage, maintenance, hardiness — confirms what `search_plants` summarised).
+2. **Discover candidates by kind and attribute**: Call `search_plants` with the kind and the zone's requirements (e.g. `{kind: ["grass"], sunlight: ["Pełne słońce"], height: {max: 1.2}}` or `{kind: ["perennial"], hardiness: {min: 5, max: 7}, height: {min: 0.3, max: 1.0}, flowerColor: ["Różowy", "Purpurowy"]}`). The catalog is small: a species you know may not be in it, so search by kind rather than by names you guess. Multi-value enum filters are OR; numeric ranges are overlap; filters AND across attributes. Returns up to 25 `{productId, botanicalName, commonName, height, spread, kind}` matches (mature height and spread in metres) with a `total` count and `truncated` flag — refine if truncated. Optional `query` does a substring match on botanical and common names.
+3. **Verify the pick**: choose by the matches' height and spread, then call `get_plant_info` once for each kind you will place (footprint, sunlight, soil, hardiness) — not for every candidate. `full: true` adds care notes, only when the designer asks about care.
 4. **Match to zone conditions**: Does the zone get the required sunlight? Is the soil compatible? Is the hardiness zone appropriate for the location?
 5. **Check mature dimensions**: Will the plant fit at full size? Will it crowd neighbors?
-6. **Validate placement**: Pass `zoneId` when calling `add_object`/`add_objects` — the server checks that the object center falls within the zone boundary.
-7. **Check density**: After planting, call `get_zone_analysis` — aim for 85–100% coverage in planting zones. Under 70% looks sparse; over 110% means overcrowding.
+6. **Plant**: `plant_zones` with each zone's mix — it keeps plants inside their zone, clear of paths and paving, in groups or rows.
+7. **Check cover**: its reply gives each zone's cover — aim for 0.85–1.0. Under 0.7 looks sparse; over 1.1 means overcrowding.
 
 Use `search_products` (name-only matching) when you already know the species; use `search_plants` when you only know the requirements. For browsing the catalog tree, `get_categories` → `get_subcategories(parentId)` → `search_products({categoryId})`.
 

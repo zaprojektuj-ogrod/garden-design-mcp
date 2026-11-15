@@ -18,8 +18,8 @@ const PIN_SPEC_SCHEMA = {
       enum: ["door", "patio_door", "window", "gate", "view_good", "view_bad"],
       description: "Type of pin to create",
     },
-    x: { type: "number", description: "X position — units determined by set_units (default 'm', meters)" },
-    y: { type: "number", description: "Y position — units determined by set_units (default 'm', meters)" },
+    x: { type: "number", description: "X position, m" },
+    y: { type: "number", description: "Y position, m" },
     label: { type: "string", description: "Optional: Custom label for the pin" },
     notes: { type: "string", description: "Optional: Design notes — context about this pin, what it means for the layout" },
   },
@@ -34,7 +34,7 @@ export const tools: Tool[] = [
   },
   {
     name: "add_pins",
-    description: `Add multiple context pins in a single call. Returns array of pin IDs. Use this instead of calling add_pin multiple times.\n\n${PIN_TYPE_REFERENCE}`,
+    description: `Add context pins (one or more) in one call. Returns \`ids\` in input order (null where one failed), \`issues\` for failures and warnings, and \`checks\`.\n\n${PIN_TYPE_REFERENCE}`,
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -90,14 +90,40 @@ export const tools: Tool[] = [
     },
   },
   {
+    name: "get_journal",
+    description: "Read your design journal: your working memory of this garden across sessions (site, baseline, pins, brief, the decisions of each pass, open questions, status), in Markdown sections. For you only — the owner never sees it. Read it at the start of a session. Answers {text, updatedAt}; empty text while nothing has been written.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {},
+    },
+  },
+  {
+    name: "write_journal",
+    description: "Write your design journal (kept with the garden, for you only). Write the whole journal once; after that update only the section that changed by naming it in `section` — never resend the rest. Answers the journal's length, not its text.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        text: {
+          type: "string",
+          description: "The whole journal, or with `section` that section's new text",
+        },
+        section: {
+          type: "string",
+          description: "A heading's text, e.g. \"Pass 2.1\": its section (down to the next heading of the same or a higher level) is replaced; added at the end if missing",
+        },
+      },
+      required: ["text"] as string[],
+    },
+  },
+  {
     name: "set_garden_description",
-    description: "Set the garden description (Markdown supported). Use as a design journal — write the brief, key decisions, rationale, current phase, and what's next. Persists across sessions.",
+    description: "Write the garden's description: the design as it stands now, in a few lines of Markdown in the owner's language — what the garden has and why, from the decisions so far. The owner reads it, and it is shown with the garden on the website. Rewrite it whole when a pass is signed off; never a log of the work, never ids or pass numbers — those go in the journal.",
     inputSchema: {
       type: "object" as const,
       properties: {
         description: {
           type: "string",
-          description: "Garden description in Markdown format (design brief, decisions, rationale). Supports headings, lists, bold, etc.",
+          description: "The whole description, Markdown",
         },
       },
       required: ["description"] as string[],
@@ -112,7 +138,11 @@ export const tools: Tool[] = [
       properties: {
         maxSize: {
           type: "number",
-          description: "Optional: image size in pixels (default 1200)",
+          description: "Optional: image size in pixels (default 800; larger only to read fine detail)",
+        },
+        hideZones: {
+          type: "boolean",
+          description: "true: zones and pins hidden for this picture only — to check surfaces, objects and plants",
         },
       },
     },

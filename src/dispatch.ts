@@ -21,8 +21,22 @@ import {
   checkPins,
   fromAbsolutePolygon,
   pathPolygon,
+  inside,
   type Pt,
 } from "./geometry.js";
+import { replyText } from "./slim.js";
+import { planPlanting, coverOf, type Canopy } from "./planting.js";
+
+/** Zones whose ground takes no plants: plant_zones keeps plant centres out of them */
+const NO_PLANTING = new Set(["terrace", "path", "building", "entry", "parking", "lawn"]);
+
+interface PlantZoneSpec {
+  zoneId: string;
+  plants?: Array<{ productId: string | number; share?: number; count?: number }>;
+  layout?: "groups" | "row";
+  coverage?: number;
+  replace?: boolean;
+}
 
 /** Calls one editor method; `timeoutMs` matters only where the transport can time out */
 export type Send = (method: string, params: Record<string, unknown>, timeoutMs?: number) => Promise<unknown>;
@@ -113,9 +127,13 @@ export function scaleObjectElevation<T>(value: T, factor: number): T {
   return o as T;
 }
 
-const textResult = (value: unknown): ToolResult => ({
-  content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }],
+/** A reply as compact JSON, trimmed per tool (slim.ts): every token here is re-read on each later turn */
+const textResult = (value: unknown, name = "", args: Record<string, unknown> = {}): ToolResult => ({
+  content: [{ type: "text" as const, text: replyText(name, value, args) }],
 });
+
+/** Previews are re-read on every later turn too: 800 px is enough to check a layout */
+const PREVIEW_SIZE = 800;
 
 export function createDispatcher(send: Send, designGuide: string) {
   async function siteState() {
@@ -187,7 +205,7 @@ export function createDispatcher(send: Send, designGuide: string) {
             if (s.locked && ids[i]) await send("update_zone", { id: ids[i], locked: true });
           }
         }
-        return textResult({ ...result, checks: await zoneChecks(ids) });
+        return textResult({ ...result, checks: await zoneChecks(ids) }, name);
       }
 
       if (name === "add_pin" || name === "add_pins") {
@@ -199,7 +217,100 @@ export function createDispatcher(send: Send, designGuide: string) {
         const pins = ((await send("get_pins", {})) as Array<{ id: string; pinType: string; x: number; y: number }>)
           .filter((p) => ids.includes(p.id))
           .map((p) => ({ ...p, x: p.x / DPM, y: p.y / DPM }));
-        return textResult({ ...result, checks: checkPins(pins, shapes, boundary, rotation) });
+        return textResult({ ...result, checks: checkPins(pins, shapes, boundary, rotation) }, name);
+      }
+
+      // A plan of the surfaces and plants: zones and pins hidden for the picture, shown again after
+      if (name === "capture_preview" && args?.hideZones === true) {
+        const { hideZones: _hide, ...rest } = args;
+        await send("set_layer_visible", { layer: "metadata", visible: false });
+        try {
+          return await callTool("capture_preview", rest);
+        } finally {
+          await send("set_layer_visible", { layer: "metadata", visible: true });
+        }
+      }
+
+      if (name === "capture_preview" && args?.maxSize === undefined) {
+        args = { ...(args ?? {}), maxSize: PREVIEW_SIZE };
+      }
+
+      // Planting: the agent picks the plants, the editor places them (planting.ts)
+      if (name === "plant_zones") {
+        const specs = (args?.zones ?? []) as PlantZoneSpec[];
+        if (!Array.isArray(specs) || specs.length === 0) {
+          return textResult({ error: "Give zones: [{ zoneId, plants: [{ productId, share or count }] }]" });
+        }
+        const [rawZones, rawObjects] = (await Promise.all([send("get_zones", {}), send("get_objects", {})])) as [
+          Array<Parameters<typeof zoneShape>[0]>,
+          unknown,
+        ];
+        const shapes = (rawZones ?? []).map(zoneShape);
+        const objectList = (Array.isArray(rawObjects) ? rawObjects : (rawObjects as { objects?: unknown[] })?.objects ?? []) as
+          Array<{ id: string; type: string; x: number; y: number; width?: number; height?: number }>;
+        let plantsNow: Array<Canopy & { id: string }> = objectList
+          .filter((o) => o.type === "plant")
+          .map((o) => ({ id: o.id, x: o.x / DPM, y: o.y / DPM, footprint: Math.max(o.width ?? 0, o.height ?? 0) / DPM }));
+
+        // Each product's catalog footprint, m (plants are drawn at it)
+        const sizes = new Map<string, number>();
+        const productIds = [...new Set(specs.flatMap((s) => (s.plants ?? []).map((p) => String(p.productId))))];
+        await Promise.all(productIds.map(async (id) => {
+          try {
+            const p = (await send("get_product_details", { productId: id })) as { width?: number; height?: number };
+            const size = Math.max(p?.width ?? 0, p?.height ?? 0) / DPM;
+            if (size > 0) sizes.set(id, size);
+          } catch { /* reported as missing below */ }
+        }));
+
+        const objects: Array<Record<string, unknown>> = [];
+        const report: Array<Record<string, unknown>> = [];
+        const removed: string[] = [];
+        for (const spec of specs) {
+          const zone = shapes.find((s) => s.id === spec.zoneId);
+          if (!zone) { report.push({ zoneId: spec.zoneId, error: "No such zone" }); continue; }
+          const asked = (spec.plants ?? []).map((p) => ({ ...p, productId: String(p.productId) }));
+          const missing = asked.filter((p) => !sizes.has(p.productId)).map((p) => p.productId);
+          const choices = asked.filter((p) => sizes.has(p.productId))
+            .map((p) => ({ productId: p.productId, footprint: sizes.get(p.productId)!, share: p.share, count: p.count }));
+          if (choices.length === 0) { report.push({ zoneId: zone.id, error: "No catalog size for these products", missing }); continue; }
+          if (spec.replace) {
+            const gone = plantsNow.filter((c) => c.id && inside(c, zone.poly));
+            removed.push(...gone.map((c) => c.id));
+            plantsNow = plantsNow.filter((c) => !gone.includes(c));
+          }
+          // A bed set into paving or lawn (pots at the door, a clump by the bench) is planted all the same
+          const avoid = shapes
+            .filter((s) => s.id !== zone.id && NO_PLANTING.has(s.zoneType) && !zone.poly.every((p) => inside(p, s.poly)))
+            .map((s) => s.poly);
+          const plan = planPlanting(zone.poly, choices, { layout: spec.layout, coverage: spec.coverage, existing: plantsNow, avoid });
+          for (const p of plan.placed) {
+            objects.push({ type: "plant", productId: p.productId, x: p.x, y: p.y, zoneId: zone.id });
+            plantsNow.push({ id: "", x: p.x, y: p.y, footprint: sizes.get(p.productId)! });
+          }
+          report.push({
+            zoneId: zone.id,
+            layout: plan.layout,
+            // the catalog size too: it can differ from search_plants' botanical spread
+            planted: choices.map((c) => ({ productId: c.productId, size: c.footprint, count: plan.placed.filter((p) => p.productId === c.productId).length })),
+            cover: Math.round(coverOf(zone.poly, plantsNow) * 100) / 100,
+            ...(Object.keys(plan.short).length ? { short: plan.short } : {}),
+            ...(missing.length ? { missing } : {}),
+          });
+        }
+        if (removed.length) await send("delete_objects", { ids: removed });
+        let added: { issues?: unknown; error?: string } = {};
+        if (objects.length) {
+          const reply = await callTool("add_objects", { objects });
+          const text = (reply.content[0] as { text?: string } | undefined)?.text ?? "";
+          try { added = JSON.parse(text); } catch { added = { error: text }; }
+        }
+        return textResult({
+          zones: report,
+          ...(removed.length ? { removed: removed.length } : {}),
+          ...(added.issues ? { issues: added.issues } : {}),
+          ...(added.error ? { error: added.error } : {}),
+        });
       }
 
       // Surfaces: absolute `polygon` / `path`, as for zones → the editor's centre + relative points form
@@ -271,7 +382,7 @@ export function createDispatcher(send: Send, designGuide: string) {
         };
       }
 
-      return textResult(result);
+      return textResult(result, name, args ?? {});
     } catch (error) {
       const message =
         error instanceof Error ? error.message : String(error);

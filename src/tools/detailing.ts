@@ -21,19 +21,19 @@ const OBJECT_SPEC_SCHEMA = {
     },
     x: {
       type: "number",
-      description: "Center X — units determined by set_units (default 'm', meters)",
+      description: "Center X, m",
     },
     y: {
       type: "number",
-      description: "Center Y — units determined by set_units (default 'm', meters)",
+      description: "Center Y, m",
     },
     width: {
       type: "number",
-      description: "Footprint size east–west — units determined by set_units (default 'm'); optional, defaults to product catalog value. Ignored for plants: they are drawn at their mature catalog size and cannot be resized.",
+      description: "Footprint size east–west, m; optional, defaults to product catalog value. Ignored for plants: they are drawn at their mature catalog size and cannot be resized.",
     },
     height: {
       type: "number",
-      description: "Footprint size north–south (plan depth, not how tall it is) — units determined by set_units (default 'm'); optional, defaults to product catalog value. Ignored for plants (mature catalog size).",
+      description: "Footprint size north–south (plan depth, not how tall it is), m; optional, defaults to product catalog value. Ignored for plants (mature catalog size).",
     },
     rotation: {
       type: "number",
@@ -108,7 +108,7 @@ const OBJECT_SPEC_SCHEMA = {
     pathWidth: {
       type: "number",
       description:
-        "Path corridor width — units determined by set_units (default 'm'); for type=path, default 1m",
+        "Path corridor width, m; for type=path, default 1m",
     },
   },
   required: ["type"] as string[],
@@ -192,13 +192,17 @@ export const tools: Tool[] = [
   {
     name: "get_plant_info",
     description:
-      "Returns detailed botanical information for a plant product: characteristics (height, spread, form, foliage, flowers), requirements (soil, sunlight, hardiness), and maintenance schedule. Use this to make informed plant selection decisions.",
+      "A plant's catalog footprint and botanical facts: characteristics (height, spread, form, foliage, flowers), requirements (soil, sunlight, hardiness), maintenance level and spacing. Check finalists only — search_plants already gives every match's mature height and spread.",
     inputSchema: {
       type: "object" as const,
       properties: {
         productId: {
           type: "string",
           description: "Product ID of the plant to look up",
+        },
+        full: {
+          type: "boolean",
+          description: "true: also the seasonal care, pests and installation notes — only when the designer asks about care",
         },
       },
       required: ["productId"],
@@ -216,7 +220,7 @@ export const tools: Tool[] = [
   {
     name: "search_plants",
     description:
-      "Filter the plant catalog by botanical attributes. Returns lean records ({productId, code, botanicalName, commonName}). Call get_plant_attributes first to discover valid filter values for the current locale. Multi-value filters use OR semantics (any value matches); different filters are AND-combined. Range filters use overlap semantics (a plant's range must intersect the requested range). Capped at limit (default 25, max 100); response includes total + truncated flag. Use get_plant_info for full per-plant details after picking a candidate. Falls back to a loud error if the index is unavailable on the CDN — agents should retry name-based queries via search_products in that case.",
+      "Filter the plant catalog by botanical attributes. Returns lean records ({productId, botanicalName, commonName, height, spread, kind} — mature height and spread in metres, the top of each range). Filter by `kind` (grass, perennial, shrub…) instead of guessing names: the catalog is small, and a name you know may not be in it. Call get_plant_attributes first to discover valid filter values for the current locale. Multi-value filters use OR semantics (any value matches); different filters are AND-combined. Range filters use overlap semantics (a plant's range must intersect the requested range). Capped at limit (default 25, max 100); response includes total + truncated flag. Use get_plant_info only to check a finalist's requirements. Falls back to a loud error if the index is unavailable on the CDN — agents should retry name-based queries via search_products in that case.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -224,6 +228,11 @@ export const tools: Tool[] = [
           type: "string",
           description:
             "Optional substring match (case-insensitive) on botanicalName OR commonName. No diacritic stripping — pass terms as they appear in the locale (e.g. 'Jeżówka', not 'jezowka'). Exact matches are ranked first.",
+        },
+        kind: {
+          type: "array",
+          items: { type: "string", enum: ["tree", "shrub", "climber", "perennial", "grass", "herb", "bulb", "fruit", "other"] },
+          description: "Catalog kinds; any of them matches (e.g. [\"grass\"], [\"perennial\", \"herb\"]). Fruit = fruiting perennials such as strawberries; fruit bushes are shrubs.",
         },
         flowerColor: {
           type: "array",
@@ -260,7 +269,7 @@ export const tools: Tool[] = [
             min: { type: "number", description: "Lower bound in meters (omit for no lower bound)" },
             max: { type: "number", description: "Upper bound in meters (omit for no upper bound)" },
           },
-          description: "Overlap match: the plant's height range must intersect [min, max] (inclusive). Values are in METERS regardless of set_units (this is plant size, not editor coordinates).",
+          description: "Overlap match: the plant's height range must intersect [min, max] (inclusive), metres.",
         },
         spread: {
           type: "object",
@@ -318,7 +327,7 @@ export const tools: Tool[] = [
   {
     name: "add_objects",
     description:
-      "Add multiple garden objects in a single call. Returns array of results. Use this instead of calling add_object multiple times. Each object supports productId OR productQuery, and optional width/height.",
+      "Add garden objects (one or more) in one call. Type determines rendering: 'plant' for plants, 'building' for architecture, 'rectangle'/'ellipse'/'polygon'/'path' for ground shapes; a path takes pathWaypoints (centreline) and pathWidth. Each object takes productId OR productQuery (a name search resolved server-side); width/height are optional (catalog defaults). Returns `ids` in input order (null where one failed) and `issues` for failures and warnings.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -332,6 +341,42 @@ export const tools: Tool[] = [
     },
   },
   {
+    name: "plant_zones",
+    description:
+      "Plant zones with the plants you chose — the editor places them: in beds, groups of 3–7 of a kind with canopies touching; in hedge and screen zones, one closed row. Plants take their catalog size, line up with the zone's longest edge, and stay clear of paths, terraces, buildings, entries, parking, lawn and the plants already there. Use it for all planting (trees and specimen shrubs too, with `count`) instead of placing plants with add_objects — and plant every zone of a pass in one call. Replies per zone: how many of each it planted and the canopy `cover` (aim 0.85–1.0).",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        zones: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              zoneId: { type: "string" },
+              plants: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    productId: { type: "string" },
+                    share: { type: "number", description: "Relative share of the zone's planted area (default 1): more for the main filler and groundcover, less for accents" },
+                    count: { type: "number", description: "An exact number instead of a share, e.g. 1 tree or 3 shrubs" },
+                  },
+                  required: ["productId"],
+                },
+              },
+              layout: { type: "string", enum: ["groups", "row"], description: "groups for beds, row for a hedge or screen; default row when the zone is narrower than 1.6 plants" },
+              coverage: { type: "number", description: "Target canopy cover of the zone (default 0.9)" },
+              replace: { type: "boolean", description: "Remove the plants already in the zone first (to redo it)" },
+            },
+            required: ["zoneId", "plants"],
+          },
+        },
+      },
+      required: ["zones"],
+    },
+  },
+  {
     name: "update_object",
     description:
       "Update a garden object's position, size, rotation, or swap its product. " +
@@ -340,10 +385,10 @@ export const tools: Tool[] = [
       type: "object" as const,
       properties: {
         id: { type: "string", description: "Object ID to update" },
-        x: { type: "number", description: "New center X — units determined by set_units (default 'm')" },
-        y: { type: "number", description: "New center Y — units determined by set_units (default 'm')" },
-        width: { type: "number", description: "New width — units determined by set_units (default 'm')" },
-        height: { type: "number", description: "New height — units determined by set_units (default 'm')" },
+        x: { type: "number", description: "New center X, m" },
+        y: { type: "number", description: "New center Y, m" },
+        width: { type: "number", description: "New width, m" },
+        height: { type: "number", description: "New height, m" },
         rotation: { type: "number", description: "New rotation in degrees" },
         elevation: { type: "number", description: "New elevation in meters — ground surfaces only; architecture keeps its catalog height" },
         label: { type: "string", description: "New label" },
@@ -375,8 +420,8 @@ export const tools: Tool[] = [
   {
     name: "update_objects",
     description:
-      "Update multiple garden objects in a single call. Returns array of results. " +
-      "Each item can swap its product with productId or productQuery, as in update_object.",
+      "Update garden objects (one or more) in one call: position, size, rotation, label, or swap the product with productId or productQuery " +
+      "(plants and buildings adopt the new catalog size; ground shapes keep their shape and swap texture only). Returns `ids` and `issues`.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -387,10 +432,10 @@ export const tools: Tool[] = [
             type: "object",
             properties: {
               id: { type: "string", description: "Object ID to update" },
-              x: { type: "number", description: "New center X — units determined by set_units (default 'm')" },
-              y: { type: "number", description: "New center Y — units determined by set_units (default 'm')" },
-              width: { type: "number", description: "New width — units determined by set_units (default 'm')" },
-              height: { type: "number", description: "New height — units determined by set_units (default 'm')" },
+              x: { type: "number", description: "New center X, m" },
+              y: { type: "number", description: "New center Y, m" },
+              width: { type: "number", description: "New width, m" },
+              height: { type: "number", description: "New height, m" },
               rotation: { type: "number", description: "New rotation in degrees" },
               elevation: { type: "number", description: "New elevation in meters — ground surfaces only; architecture keeps its catalog height" },
               label: { type: "string", description: "New label" },

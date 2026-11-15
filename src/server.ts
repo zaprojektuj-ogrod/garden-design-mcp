@@ -44,27 +44,8 @@ if (MCP_INSTRUCTIONS.length > INSTRUCTIONS_LIMIT) {
   console.error(`[MCP] mcp-instructions.md is ${MCP_INSTRUCTIONS.length} chars; clients truncate beyond ${INSTRUCTIONS_LIMIT}`);
 }
 
-// Connection status tool — handled locally (not forwarded to browser)
-const CONNECTION_STATUS_TOOL = {
-  name: "connection_status",
-  description: "Check if the browser is connected",
-  inputSchema: {
-    type: "object" as const,
-    properties: {},
-  },
-};
-
-// Version tool — reports MCP server + editor versions for capability checks at session start
-const GET_VERSION_TOOL = {
-  name: "get_version",
-  description:
-    "Returns version info for the MCP server and the connected browser editor. Use at session start to confirm you are talking to a build that supports the features you depend on (e.g. M25 plant-attribute search). Response: { mcpServer: { name, version }, editor: { version, buildTime, gitHash } | null }. The editor block is null when the browser is not connected.",
-  inputSchema: {
-    type: "object" as const,
-    properties: {},
-  },
-};
-
+// connection_status and get_version are answered here (not forwarded to the browser) but not
+// listed: each listed definition rides along with every request (tools/index.ts › UNLISTED)
 
 const dispatcher = createDispatcher(sendToBrowser, DESIGN_GUIDE);
 
@@ -87,7 +68,7 @@ export function createServer(): Server {
   // ── Tools ──
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
-    return { tools: [...ALL_TOOLS, CONNECTION_STATUS_TOOL, GET_VERSION_TOOL, DESIGN_GUIDE_TOOL] };
+    return { tools: [...ALL_TOOLS, DESIGN_GUIDE_TOOL] };
   });
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {

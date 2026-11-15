@@ -81,7 +81,7 @@ export const tools: Tool[] = [
   },
   {
     name: "add_zones",
-    description: `Add multiple zones in a single call. Returns array of zone IDs. Use this instead of calling add_zone multiple times.\n\n${ZONE_TYPE_REFERENCE}`,
+    description: `Add zones (one or more) in one call. Returns \`ids\` in input order (null where one failed), \`issues\` for failures and warnings, and \`checks\` for each zone.\n\n${ZONE_TYPE_REFERENCE}`,
     inputSchema: {
       type: "object" as const,
       properties: {

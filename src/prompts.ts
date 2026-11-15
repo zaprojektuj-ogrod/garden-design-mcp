@@ -60,8 +60,8 @@ Talk to me as the guide says: a few short lines, one question at a time, no ids 
             text: `Resume working on an existing garden design:
 
 1. Call get_full_state to read the current garden state.
-2. Check the garden description for prior context and design decisions.
-3. Run through the garden-level checklist: boundary? geo-anchor? north? pins? zones? description?
+2. Call get_journal for prior context and design decisions.
+3. Run through the garden-level checklist: boundary? geo-anchor? north? pins? zones? journal? description?
 4. For each zone, read its notes to determine per-zone status (empty / in-progress / complete).
 5. Check the per-zone checklist: purpose documented? ground surface? objects? spacing? density? plant suitability? labels?
 6. Identify the biggest gaps and suggest concrete next actions.

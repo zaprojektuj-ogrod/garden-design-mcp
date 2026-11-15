@@ -57,8 +57,8 @@ export const tools: Tool[] = [
     inputSchema: {
       type: "object" as const,
       properties: {
-        x: { type: "number", description: "Center X — units determined by set_units (default 'm', meters)" },
-        y: { type: "number", description: "Center Y — units determined by set_units (default 'm', meters)" },
+        x: { type: "number", description: "Center X, m" },
+        y: { type: "number", description: "Center Y, m" },
         width: {
           type: "number",
           description: "Optional: Bounds width to fit in view",
