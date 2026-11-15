@@ -117,7 +117,7 @@ export const tools: Tool[] = [
   },
   {
     name: "set_garden_description",
-    description: "Write the garden's description: the design as it stands now, in a few lines of Markdown in the owner's language — what the garden has and why, from the decisions so far. The owner reads it, and it is shown with the garden on the website. Rewrite it whole when a pass is signed off; never a log of the work, never ids or pass numbers — those go in the journal.",
+    description: "Write the garden's description. It is the owner's: write it only when they ask for it or agree to your offer (offer at most once, when the design is finished). The design as it stands now, in a few lines of Markdown in the owner's language — what the garden has and why. The owner reads it, and it is shown with the garden on the website. Never a log of the work, never ids or pass numbers — those go in the journal.",
     inputSchema: {
       type: "object" as const,
       properties: {

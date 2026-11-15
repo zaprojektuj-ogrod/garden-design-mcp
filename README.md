@@ -123,7 +123,7 @@ Another 17 tools still answer when called but aren't listed, since every listed 
 | `set_garden_rotation` | Set north orientation in degrees |
 | `get_journal` | Read the assistant's design journal: its working memory of the garden between sessions, kept with the garden and never shown to the owner |
 | `write_journal` | Write the journal whole, or with `section` one heading's section without resending the rest |
-| `set_garden_description` | Write the garden's description: the design as it stands now, in Markdown, which the owner reads and which is shown with the garden on the website |
+| `set_garden_description` | Write the garden's description when the owner asks for it or agrees: the design as it stands now, in Markdown, shown with the garden on the website |
 | `capture_preview` | Capture a top-down view as an image the assistant sees inline: 800 px by default; `hideZones: true` hides zones and pins for that picture |
 
 ### Phase 3: Zones

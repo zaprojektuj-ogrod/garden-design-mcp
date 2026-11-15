@@ -143,7 +143,7 @@ The journal is your working memory of the garden, kept with it across sessions a
 3. **What to write**: Design brief, key decisions with rationale, current status, and what's next.
 4. **Format**: Use Markdown — headings for sections, bullet lists for decisions, bold for emphasis.
 
-The garden's description is what the owner reads, and it is shown with the garden on the website. Keep it as the design as it stands now, never a log of the work: each time you record a decision about the design in the journal (a stage or pass signed off, a change the owner asked for), rewrite the description whole with `set_garden_description` — a few lines of Markdown in the owner's language: what the garden has and why. No ids, pass numbers or figures the plan already shows.
+The garden's description belongs to the owner: they read it, and it is shown with the garden on the website. Never write it on your own. Write it when the owner asks for it; when the design is finished (the last pass accepted) you may offer it once, as that reply's one question, and write it only if they agree. Then write it whole with `set_garden_description`: the design as it stands now, never a log of the work — a few lines of Markdown in the owner's language, what the garden has and why. No ids, pass numbers or figures the plan already shows.
 
 ### Zone Notes (per-zone decision log)
 Each zone has a `notes` field. Use it to track per-zone status with this convention:
@@ -165,7 +165,7 @@ Work through a **checklist**, not a rigid sequence. Zones progress independently
 - [ ] North orientation set
 - [ ] Context pins placed (doors, windows, gates, views)
 - [ ] Zones defined covering the usable area
-- [ ] Journal written with brief and key decisions; garden description shows the design as it stands
+- [ ] Journal written with brief and key decisions
 
 ### Per-zone checklist
 - [ ] Purpose documented in zone notes
