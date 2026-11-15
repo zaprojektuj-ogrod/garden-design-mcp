@@ -183,6 +183,8 @@ export function convertProductSizesToMeters(result: unknown): unknown {
 
 // Tools that should NOT have their output converted (non-spatial data)
 const SKIP_OUTPUT_CONVERSION = new Set([
+  // the house tools take and return metres themselves (G36)
+  "house_build", "house_set_block", "house_set_roof", "house_set_walls", "house_set_openings", "house_get", "house_preview",
   "connection_status",
   "search_products",
   "get_categories",
@@ -207,6 +209,8 @@ const SKIP_OUTPUT_CONVERSION = new Set([
 
 // Tools that should NOT have their input converted (no spatial params)
 const SKIP_INPUT_CONVERSION = new Set([
+  // the house tools take and return metres themselves (G36)
+  "house_build", "house_set_block", "house_set_roof", "house_set_walls", "house_set_openings", "house_get", "house_preview",
   "connection_status",
   "search_products",
   "get_categories",

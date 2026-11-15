@@ -79,7 +79,7 @@ Then configure your AI client with a direct path:
 }
 ```
 
-## Available tools (63)
+## Available tools (70)
 
 Tools follow the design funnel: **Site → Context → Zones → Detailing → Review**. Most tools that create or change things have a batch sibling (`add_objects`, `update_objects`, `delete_objects`, `add_pins`, `add_zones`); prefer the batch form when placing many items. Call `get_design_guide` once at the start: it holds the whole workflow, the photo method and the planting rules.
 
@@ -156,6 +156,19 @@ Tools follow the design funnel: **Site → Context → Zones → Detailing → R
 | `undo` | Undo last action |
 | `redo` | Redo last undone action |
 | `get_coordinate_system` | Coordinate system docs (units, axes, scale) |
+
+### The designer's own house
+Built from the designer's photos, step by step, out of simple blocks, on the house's land-registry outline (after `import_buildings`). Kept with the garden as its description and rebuilt wherever the garden opens; no model file is stored.
+
+| Tool | Description |
+|------|-------------|
+| `house_build` | The main block on the house's outline, at true size and turn, its front on the compass side given |
+| `house_set_roof` | A block's roof: gable, hip, mono-pitch or flat; ridge direction, heights, covering, colour; chimneys, solar panels |
+| `house_set_walls` | Walls' finish and colour, a lower band, the plinth |
+| `house_set_openings` | One facade's windows, doors and facade panels |
+| `house_set_block` | Add, change or remove a further block: a wing, a garage, a porch |
+| `house_preview` | Pictures of the house from the sides asked for, to compare with the photos |
+| `house_get` | The house as built: position, facades by compass side, blocks, openings |
 
 ### Utility
 | Tool | Description |

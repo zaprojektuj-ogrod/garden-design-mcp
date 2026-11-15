@@ -247,6 +247,17 @@ export function createDispatcher(send: Send, designGuide: string) {
         };
       }
 
+      // G36: the house from a few sides, as pictures the agent compares with the photos
+      if (name === "house_preview") {
+        const { views = [], ...about } = (result ?? {}) as { views?: Array<{ view: string; dataUri: string }> };
+        const content: ToolContent[] = [{ type: "text", text: JSON.stringify({ ...about, views: views.map((v) => v.view) }) }];
+        for (const v of views) {
+          const match = v.dataUri.match(/^data:(image\/[a-z]+);base64,(.+)$/);
+          if (match) content.push({ type: "text", text: v.view }, { type: "image", mimeType: match[1], data: match[2] });
+        }
+        return { content };
+      }
+
       // G26: a close-up comes back as the picture plus its view id and size
       if (name === "zoom_image") {
         const { dataUri = "", ...about } = (result ?? {}) as { dataUri?: string };
