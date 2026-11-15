@@ -162,7 +162,7 @@ Built from the designer's photos, step by step, out of simple blocks, on the hou
 
 | Tool | Description |
 |------|-------------|
-| `house_build` | The main block on the house's outline, at true size and turn, its front on the compass side given |
+| `house_build` | The main block on the house's outline, at true size and turn, its front on the compass side given; `open: true` for a structure on posts of its own (a carport, a pergola) |
 | `house_set_roof` | A block's roof: gable, hip, mono-pitch, flat, or none (a post); ridge direction, heights, covering, colour; chimneys, solar panels |
 | `house_set_walls` | Walls' finish and colour, a lower band, the plinth |
 | `house_set_openings` | One facade's windows, doors and facade panels |

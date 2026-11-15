@@ -29,6 +29,7 @@ export const tools: Tool[] = [
         wallHeight: { type: "number", description: "Ground to the eaves, m (about 2.8–3.2 for one storey, 5.5–6.5 for two)" },
         plinthHeight: { type: "number", description: "A raised base band under the walls, m (0 = none)" },
         name: { type: "string" },
+        open: { type: "boolean", description: "A structure on posts of its own (a carport, a pergola, a gazebo): its main block has open sides, the roof hanging at wallHeight (default a thin flat roof); add the posts with house_set_block. Moved and turned apart from the house" },
       },
       required: ["front", "wallHeight"],
     },
