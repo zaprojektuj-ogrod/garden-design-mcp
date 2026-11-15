@@ -45,7 +45,7 @@ It works one step at a time and stops for your sign-off: the site first, then th
 
 **3. Ask your assistant**, for example: *"Help me design my garden, step by step."* Or start from the server's `start_design` prompt.
 
-**Effort.** Medium effort is enough. In our tests Claude Opus 5.5 designed as well at medium effort as at high, for about half the cost. Effort is your client's setting, so the server can't set it. In Claude Code, start with `claude --effort medium`.
+**Effort.** Medium effort is enough. In our tests Claude Opus 5.5 designed as well at medium effort as at high, for about a quarter less. Effort is your client's setting, so the server can't set it. In Claude Code, start with `claude --effort medium`.
 
 ## How it works
 
