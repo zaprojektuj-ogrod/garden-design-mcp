@@ -163,10 +163,10 @@ Built from the designer's photos, step by step, out of simple blocks, on the hou
 | Tool | Description |
 |------|-------------|
 | `house_build` | The main block on the house's outline, at true size and turn, its front on the compass side given |
-| `house_set_roof` | A block's roof: gable, hip, mono-pitch or flat; ridge direction, heights, covering, colour; chimneys, solar panels |
+| `house_set_roof` | A block's roof: gable, hip, mono-pitch, flat, or none (a post); ridge direction, heights, covering, colour; chimneys, solar panels |
 | `house_set_walls` | Walls' finish and colour, a lower band, the plinth |
 | `house_set_openings` | One facade's windows, doors and facade panels |
-| `house_set_block` | Add, change or remove a further block: a wing, a garage, a porch |
+| `house_set_block` | Add, change or remove a further block: a wing, a garage; posts and open roofs for a porch, a carport, a pergola |
 | `house_preview` | Pictures of the house from the sides asked for, to compare with the photos |
 | `house_get` | The house as built: position, facades by compass side, blocks, openings |
 

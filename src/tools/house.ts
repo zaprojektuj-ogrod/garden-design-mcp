@@ -18,6 +18,7 @@ export const tools: Tool[] = [
     description:
       "Build the 3D model of a house on its building outline (from import_buildings), at true size and in its place: the main block — walls up to the eaves and a plain gable roof, default colours. " +
       "Then shape it step by step: house_set_roof, house_set_walls, house_set_openings, and house_set_block for further blocks (a wing, a garage, a porch) assembled from the same simple boxes-with-roofs. " +
+      "A porch, carport or pergola is posts plus an open block: posts are thin blocks (about 0.15 × 0.15 m, no roof), the roof an open block (open: true) at the eave height. " +
       "Tell it which compass side the front (entrance) facade faces — read it from the photos and get_site_analysis. Calling it again starts that house over. " +
       "Look at the result after each step with house_preview and compare it with the photos. " + FRAME,
     inputSchema: {
@@ -37,6 +38,8 @@ export const tools: Tool[] = [
     description:
       "Add, change or remove a block of the house — a box with its own walls, roof and openings: a wing (L or T shape), a garage, a porch, a bay. " +
       "A new block needs center, width, depth and wallHeight; it takes the main block's walls and roof material, with a gable roof you can change with house_set_roof {block}. " +
+      "Open roofs on posts — a porch on posts, a carport, a pergola: add the posts as thin blocks (width and depth 0.4 m or less: they get no roof and no plinth; give them a wood, render or concrete finish with house_set_walls), " +
+      "then the roof as a block with open: true (no walls; its roof hangs at its wallHeight, a gable's ends stay clad; a plinthHeight gives it a deck underneath) and set its roof (gable, shed or flat — a flat one is a thin sheet). " +
       "Blocks may overlap the main block (a wing joined to it). The main block's size and place come from the outline: change only its wallHeight here. " + FRAME,
     inputSchema: {
       type: "object",
@@ -49,6 +52,7 @@ export const tools: Tool[] = [
         depth: { type: "number", description: "Along z (front to back), m" },
         wallHeight: { type: "number", description: "Ground to the eaves, m" },
         plinthHeight: { type: "number", description: "This block's base band (e.g. 0 for a garage)" },
+        open: { type: "boolean", description: "Open sides: no walls, the roof hangs at wallHeight (a porch's or carport's roof on posts)" },
         remove: { type: "boolean" },
       },
     },
@@ -63,7 +67,7 @@ export const tools: Tool[] = [
       type: "object",
       properties: {
         ...HOUSE, ...BLOCK,
-        type: { type: "string", enum: ["gable", "hip", "shed", "flat"] },
+        type: { type: "string", enum: ["gable", "hip", "shed", "flat", "none"], description: "none: no roof (a post)" },
         ridge: { type: "string", enum: ["parallel", "perpendicular"], description: "Ridge direction relative to the front facade" },
         ridgeHeight: { type: "number", description: "Ground to the ridge (shed: to the high edge), m" },
         eaveHeight: { type: "number", description: "Ground to the eaves, m (the block's wall height)" },
