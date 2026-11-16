@@ -164,29 +164,63 @@ export function siteAxes(boundary: Pt[], house: Pt[] | null): Array<{ deg: numbe
 
 /**
  * The garden left without a zone: cells of a 0.5 m grid inside the boundary, outside every building, that no zone
- * covers, joined into patches; the largest first (≥ 2 m²), each with its area, centre and extent, so the agent finds
- * the gaps itself rather than the user pointing at them (SC-231)
+ * covers, joined into patches (diagonal neighbours too, so a thin slanted sliver stays one patch); the largest first,
+ * down to slivers of 1 m², each with its area, centre, extent and what it lies between — the zones, a building or
+ * the boundary — so the agent finds the gaps itself and knows whose edge to move, rather than the user pointing at
+ * them (SC-237). Pieces under 3 m² are gathered by what they lie between: a zone edge running just off a slanted fence
+ * leaves a thin gap the grid breaks into dozens of pieces, and that gap is listed as one patch with its `bits`. Ground
+ * that touches only the plot line and a fence drawn as a thin building lies outside the fence and is left out.
  */
-export function blankAreas(boundary: Pt[], zones: Shape[], maxPatches = 8) {
+export function blankAreas(boundary: Pt[], zones: Shape[], maxPatches = 12) {
   const G = 0.5;
+  const MIN_CELLS = 4;     // 1 m² listed: a lone smaller piece is the grid catching a curved edge, not a gap anyone sees
+  const PIECE_CELLS = 12;  // under 3 m² a piece is gathered with the others along the same edge
   const xs = boundary.map((p) => p.x), ys = boundary.map((p) => p.y);
   const x0 = Math.min(...xs), y0 = Math.min(...ys);
   const nx = Math.ceil((Math.max(...xs) - x0) / G), ny = Math.ceil((Math.max(...ys) - y0) / G);
-  const buildings = zones.filter((z) => z.zoneType === "building").map((z) => z.poly);
-  const cover = zones.filter((z) => z.zoneType !== "building").map((z) => z.poly);
-  const blank = new Uint8Array(nx * ny);
+  const buildings = zones.filter((z) => z.zoneType === "building");
+  const cover = zones.filter((z) => z.zoneType !== "building");
+  // a fence drawn as a building: thin (area over perimeter under 0.25 m, i.e. under about 0.5 m wide). The ground
+  // between a fence and the plot line is outside the garden, not a gap to fill
+  const perimeter = (poly: Pt[]) => poly.reduce((t, a, i) => { const b = poly[(i + 1) % poly.length]; return t + Math.hypot(b.x - a.x, b.y - a.y); }, 0);
+  const fenceShapes = buildings.filter((b) => area(b.poly) < 0.25 * perimeter(b.poly));
+  const fences = new Set(fenceShapes.map((b) => b.id));
+  const polyDist = (p: Pt, poly: Pt[]) => Math.min(...poly.map((a, i) => segDist(p, a, poly[(i + 1) % poly.length])));
+  // a fence thinner than the grid falls between its points, so the strip outside it is found by distance too:
+  // within half a metre of a fence and three quarters of a metre of the plot line
+  const atFence = (p: Pt) => fenceShapes.some((f) => polyDist(p, f.poly) <= 0.5) && polyDist(p, boundary) <= 0.75;
+  let outside = 0;
+  // what holds each cell: -1 blank, -2 outside the boundary, else the index of the zone or building in `holders`
+  const holders = [...cover, ...buildings];
+  const held = new Int32Array(nx * ny).fill(-2);
   let garden = 0, empty = 0;
   for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
     const p = { x: x0 + (i + 0.5) * G, y: y0 + (j + 0.5) * G };
-    if (!inside(p, boundary) || buildings.some((b) => inside(p, b))) continue;
+    if (!inside(p, boundary)) continue;
+    const b = buildings.findIndex((z) => inside(p, z.poly));
+    if (b >= 0) { held[j * nx + i] = cover.length + b; continue; }
+    const c = cover.findIndex((z) => inside(p, z.poly));
+    if (c < 0 && fenceShapes.length && atFence(p)) continue;   // outside the fence: not garden
     garden++;
-    if (!cover.some((c) => inside(p, c))) { blank[j * nx + i] = 1; empty++; }
+    held[j * nx + i] = c;
+    if (c < 0) empty++;
   }
-  const patches: Array<{ areaM2: number; centre: Pt; from: Pt; to: Pt }> = [];
+  type Cells = { n: number; sx: number; sy: number; i0: number; i1: number; j0: number; j1: number; between: string[]; bits: number };
+  const patchOf = (c: Cells) => ({
+    areaM2: round(c.n * G * G, 1),
+    centre: rp({ x: x0 + (c.sx / c.n + 0.5) * G, y: y0 + (c.sy / c.n + 0.5) * G }),
+    from: rp({ x: x0 + c.i0 * G, y: y0 + c.j0 * G }),
+    to: rp({ x: x0 + (c.i1 + 1) * G, y: y0 + (c.j1 + 1) * G }),
+    between: c.between,
+    ...(c.bits > 1 ? { bits: c.bits } : {}),
+  });
+  const patches: Array<ReturnType<typeof patchOf>> = [];
+  const crumbs = new Map<string, Cells>();
   const seen = new Uint8Array(nx * ny);
-  for (let s = 0; s < blank.length; s++) {
-    if (!blank[s] || seen[s]) continue;
+  for (let s = 0; s < held.length; s++) {
+    if (held[s] !== -1 || seen[s]) continue;
     let n = 0, sx = 0, sy = 0, i0 = Infinity, i1 = -Infinity, j0 = Infinity, j1 = -Infinity;
+    const around = new Map<string, number>();
     const stack = [s];
     seen[s] = 1;
     while (stack.length) {
@@ -194,22 +228,36 @@ export function blankAreas(boundary: Pt[], zones: Shape[], maxPatches = 8) {
       const i = c % nx, j = (c - i) / nx;
       n++; sx += i; sy += j;
       i0 = Math.min(i0, i); i1 = Math.max(i1, i); j0 = Math.min(j0, j); j1 = Math.max(j1, j);
-      for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+        if (!di && !dj) continue;
         const ii = i + di, jj = j + dj, q = jj * nx + ii;
-        if (ii >= 0 && ii < nx && jj >= 0 && jj < ny && blank[q] && !seen[q]) { seen[q] = 1; stack.push(q); }
+        const h = ii >= 0 && ii < nx && jj >= 0 && jj < ny ? held[q] : -2;
+        if (h === -1) { if (!seen[q]) { seen[q] = 1; stack.push(q); } continue; }
+        if (di && dj) continue;   // what a patch lies between: its side neighbours only
+        const name = h === -2 ? "boundary" : holders[h].id;
+        around.set(name, (around.get(name) ?? 0) + 1);
       }
     }
-    if (n * G * G >= 2) patches.push({
-      areaM2: round(n * G * G, 1),
-      centre: rp({ x: x0 + (sx / n + 0.5) * G, y: y0 + (sy / n + 0.5) * G }),
-      from: rp({ x: x0 + i0 * G, y: y0 + j0 * G }),
-      to: rp({ x: x0 + (i1 + 1) * G, y: y0 + (j1 + 1) * G }),
-    });
+    if ([...around.keys()].every((k) => k === "boundary" || fences.has(k))) { outside += n; continue; }   // outside a fence
+    const between = [...around].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([name]) => name);
+    if (n >= PIECE_CELLS) { patches.push(patchOf({ n, sx, sy, i0, i1, j0, j1, between, bits: 1 })); continue; }
+    // a piece: often one of many a zone edge leaves when it runs just off a fence or another zone — gathered by what
+    // it lies between, so a long thin gap reads as one patch rather than forty small ones filling the list
+    const key = between.slice(0, 2).sort().join("|");
+    const g = crumbs.get(key);
+    if (!g) { crumbs.set(key, { n, sx, sy, i0, i1, j0, j1, between, bits: 1 }); continue; }
+    g.n += n; g.sx += sx; g.sy += sy; g.bits++;
+    g.i0 = Math.min(g.i0, i0); g.i1 = Math.max(g.i1, i1); g.j0 = Math.min(g.j0, j0); g.j1 = Math.max(g.j1, j1);
   }
+  for (const g of crumbs.values()) if (g.n >= MIN_CELLS) patches.push(patchOf(g));
   patches.sort((a, b) => b.areaM2 - a.areaM2);
+  const shown = patches.slice(0, maxPatches);
+  const shownM2 = shown.reduce((t, p) => t + p.areaM2, 0);
+  empty -= outside; garden -= outside;
   return {
     m2: round(empty * G * G, 1), shareOfGarden: garden ? round(empty / garden, 3) : 0,
-    patches: patches.slice(0, maxPatches), morePatches: Math.max(0, patches.length - maxPatches),
+    patches: shown, morePatches: Math.max(0, patches.length - maxPatches),
+    unlistedM2: round(empty * G * G - shownM2, 1),
   };
 }
 
@@ -285,7 +333,7 @@ export function siteAnalysis(boundary: Pt[], zones: Shape[], rotation: number) {
       "`axes` are the site's main directions (degrees from east, y south): draw zone edges along them — the house walls and the fences — not along north/east, unless an axis runs north.",
       `\`largeGarden\` (${LARGE_GARDEN_M2} m² of garden or more): zone it in steps — feasibility and style first, your concept, the spaces, their connections, then each space — with a sign-off after each (the guide's Step 2 › Large garden).`,
       "`trees` are the trees standing on the plot, each with its trunk and crown width: draw zones under and round a tree by its real crown, not by eye.",
-      "`blank` is the garden no zone covers yet, its largest patches first (`from`–`to` is each patch's extent): call this again after each step and, before you report, fill each patch or say what it is for (e.g. the corridor the next step's path takes).",
+      "`blank` is the garden no zone covers yet, its largest patches first down to thin slivers (`from`–`to` is each patch's extent; `between` is what it lies between — zones, a building, the `boundary` — so you know whose edge to move to close it; a patch with `bits` is a thin gap in that many pieces along the same edge, e.g. a zone stopping just short of the fence): call this again after each step and, before you report, fill each patch or say what it is for (e.g. the corridor the next step's path takes). `unlistedM2` is blank left off the list (bits under 1 m², or past the first patches; `morePatches` > 0: call again once the listed ones are closed).",
     ],
   };
 }

@@ -27,8 +27,8 @@ export const tools: Tool[] = [
     name: "swap_shapes",
     description:
       "Swap generic plant shapes for species once the designer has signed off the layout: each species stands in its shapes' place at its own catalog size — " +
-      "one plant for a tree, shrub or clump; a row half its spread apart along a hedge; plants at their density over a ground-cover mat or a drift, " +
-      "which can also take a `mix` of species (neighbours differ). The whole call is one undo step. `differs` says where a species' size is outside its shape's. " +
+      "one plant for a tree, shrub or clump; a row half its spread apart along a hedge; plants at their density over a ground-cover mat (which can also take a `mix` of species, neighbours differing) or a drift. " +
+      "The whole call is one undo step. `differs` says where a species' size is outside its shape's. " +
       "Show the design before and after and ask the designer to approve; if they don't, `undo` brings the shapes back.",
     inputSchema: {
       type: "object" as const,
@@ -43,7 +43,7 @@ export const tools: Tool[] = [
               productQuery: { type: "string", description: "Or its name" },
               mix: {
                 type: "array",
-                description: "Ground cover and drifts only: several species mixed over the area, instead of productId",
+                description: "Ground cover only: several species mixed over the mat, instead of productId",
                 items: { type: "object", properties: { productId: { type: "string" }, productQuery: { type: "string" } } },
               },
             },
