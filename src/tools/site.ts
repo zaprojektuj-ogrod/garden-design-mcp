@@ -103,7 +103,7 @@ export const tools: Tool[] = [
   {
     name: "get_site_analysis",
     description:
-      "Measured site facts for placing pins and zones, computed from the parcel boundary and building zones (call after import_parcel + import_buildings). Returns (metres, garden coordinates): the parcel area and its edges by compass side; the user's house (largest building centred in the parcel) with each facade's compass side, length, from/to endpoints, midpoint, outward normal, whether it is a shared (party) wall, and `gardenDepth` — the free distance from the facade straight out to the boundary; neighbouring buildings with direction and whether attached; total garden area. Use it to put door pins ON the right facade and to check whether a terrace or bed fits on a side before drawing zones.",
+      "Measured site facts for placing pins and zones, computed from the parcel boundary and building zones (call after import_parcel + import_buildings). Returns (metres, garden coordinates): the parcel area and its edges by compass side; the user's house (largest building centred in the parcel) with each facade's compass side, length, from/to endpoints, midpoint, outward normal, whether it is a shared (party) wall, and `gardenDepth` — the free distance from the facade straight out to the boundary; neighbouring buildings with direction and whether attached; total garden area and whether it is a large garden (`largeGarden`, 400 m² or more: zoned in steps); the site's main directions (`axes`, degrees from east: the house walls and the boundary), which zone edges follow. Use it to put door pins ON the right facade and to check whether a terrace or bed fits on a side before drawing zones.",
     inputSchema: {
       type: "object" as const,
       properties: {},

@@ -106,7 +106,7 @@ Another 17 tools still answer when called but aren't listed, since every listed 
 | `get_parcel_by_address` | Address → land registry parcel (Poland) |
 | `import_parcel` | Import a parcel as the garden boundary, with the cadastral map behind it (Poland) |
 | `import_buildings` | Import the buildings on and around the parcel from the land registry (Poland) |
-| `get_site_analysis` | House facades by compass side, party walls and the garden depth on each side |
+| `get_site_analysis` | House facades by compass side, party walls and the garden depth on each side; the site's main directions for zone edges (`axes`), whether the garden is large (`largeGarden`, 400 m² or more), the garden no zone covers yet (`blank`), and the trees with their trunk and crown |
 | `upload_reference_photo` | Upload a reference photo (kept for the session) |
 | `get_reference_photos` | Get the uploaded reference photos |
 | `zoom_image` | A close-up of an image attached in the editor's chat, for reading details |

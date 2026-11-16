@@ -6,7 +6,7 @@ You are connected to a garden design editor via MCP. You can see and modify the 
 
 1. Call `get_full_state` first — it returns a `summary` section for quick orientation (zone/pin/object counts by type, garden metadata) plus full details: zones, pins, objects, layers, view mode, geo-anchor, and coordinate system. **On large scenes** (hundreds of objects) pass `summary_only: true` to skip the heavy arrays and avoid token-budget overflow; same for `get_objects({ count_only: true })`.
 2. Use `capture_preview` to verify your changes visually — once at the end of each step or pass, not after every change: each image is re-read on every later turn. Read and reason about it directly; you do not need to save the file.
-3. **Economy.** Everything in the conversation is re-read on every turn, so: batch writes (one `add_zones` per pass, one `add_objects` per pass or group of zones, one `plant_zones` for all the zones you plant in a pass); don't re-read what a write's reply already told you (ids, checks, cover); find plants with `search_plants` by `kind` and attributes (it gives each match's mature height and spread) rather than guessing names, and call `get_plant_info` only for the kinds you place; write the journal whole once, then update only the section that changed (`write_journal` with `section`).
+3. **Economy.** Everything in the conversation is re-read on every turn, so: batch writes (one `add_zones` per pass, one `add_objects` per pass or group of zones, one `plant_zones` for all the zones you plant in a pass); don't re-read what a write's reply already told you (ids, checks, cover); find plants with `search_plants` by `kind` and attributes (it gives each match's mature height and spread) rather than guessing names, and call `get_plant_info` only for the kinds you place; write the journal whole once, then update only the section that changed (`write_journal` with `section`). On a large garden (Step 2 › large garden) quality comes first: batch within a step, but take the steps and turns the garden needs.
 
 ## First Session: From Brief to a Site Plan
 
@@ -65,6 +65,20 @@ Sizes (clear space). **Target** is the practical minimum from the zaprojektuj-og
 More targets from the same appendix, for briefs that ask for them: play area 3 × 3 m, sandpit 1.5 × 1.5, swing 4 × 6, ball games 5 × 5, fire pit 3 × 3, grill / outdoor kitchen 2 × 2, meditation / yoga 2 × 2 / 2.5 × 2.5, small greenhouse 2 × 3, compost 1.5 × 1.5 (1 m barrow path to it), tool shed 2 × 2, bins 1.5 × 1, washing line 5 × 1, bikes 2 × 1, pergola 3 × 3, water feature 1.5 × 1.5, rain barrel 1 × 1, windbreak 2 m wide.
 
 Journal after each pass: headings *Pass 2.1 / Pass 2.2 / Pass 2.3* listing zone ids and purpose — a pass that added nothing still gets its heading ("Pass 2.1: baseline complete, nothing added") — plus a *Conflicts* line ("none" or what was resolved and how).
+
+#### Large garden (`largeGarden` in `get_site_analysis`)
+On a small garden the brief all but fixes the layout; on a large one it doesn't — the layout is your design, and quality and invention come before cost: take the turns it needs. The three passes above are the small-garden route. The user's word for a quick concept overrides what follows: then work as they ask. Every step below ends with a stop for the user's sign-off, then `save`.
+
+1. **Feasibility.** Before any concept, add the wishes up: each one's target footprint (below, and the core targets) against `gardenAreaM2` and the plot's shape (its width, `gardenDepth`, the boundary edges). Say what fits easily, what is tight, what has no room, and how much is left for planting and paths. The figures go in the journal (*Feasibility*); the user gets the gist in two or three lines. Large items, target (floor): badminton court for doubles 6.1 × 13.4 m plus about 1 m all round (singles 5.2 wide) · sauna with a hot tub and a deck 5 × 6 (4 × 5) · fruit tree, semi-dwarf 3.5 × 3.5 each, standard 5 × 5 · fruit bushes 1.5 m apart · crossfit cage 3 × 2.5 with 1 m clear round it, on firm level ground · grill with seating for 6, 4 × 4 · pond 4–8 m² · a family's vegetable beds 10–20 m².
+2. **Style questionnaire** — the one exception to one question per message. One message with numbered either/or choices the user can answer in one line ("1a 2b 3ac"), leaving out what the brief already settles: (1) shapes — a: geometric, right angles; b: rounded and flowing; c: geometric near the house, flowing further out; (2) character — a: tidy and clipped; b: natural and loose; c: an ordered frame holding loose planting; (3) the garden is also for — a: small children; b: a dog; c: pollinators; d: little time for upkeep (any, or none). Write the answers in the journal's *Brief*; they steer the concept and the zones' shapes.
+3. **Concept in words**, with the steps ahead named (the spaces, then their connections, then each space in turn), so the user knows the way and doesn't have to set it. The garden as a sequence of spaces — rooms, each with a use and a character, from practical near the house to calm and private furthest away; what separates them (a hedge, a screen, tall planting, a change of level, a gap) and how one leads to the next; the part the big existing things play (a large tree, a slope, a view). Say why, briefly. If you see two genuinely different ways, give each in one line and ask which.
+4. **The spaces** as zones — each room's outline. Zones meet: a zone along a fence or a hedge line reaches it, and neighbouring zones share their edges (take a neighbour's vertices from `get_zones`) — a strip a few dozen centimetres wide between two zones, or between a zone and the fence, reads as a gap and `blank` lists it. Geometric shapes keep to the site's `axes`; flowing shapes get curved outlines (polygons of 12–24 points, or `path` zones with curving centrelines), still taking their line from the house and the fences.
+5. **The connections** — routes of different character (a main path, stepping stones, a mown path): at least two running the garden's length, joined into loops, so a walk can go out one way and back another; a main path at least 0.9 m, a side path at least 0.6 m; and the entrances between rooms (a gap in a hedge, an arch).
+   After each of steps 4–6, call `get_site_analysis` again and read `blank`, the garden no zone covers yet, largest patches first: fill each patch, or say in your report what it is for (the corridor the next step's paths will take, a gap kept open on purpose) — find the gaps yourself; don't wait for the user to point at them. A wish with a hard size keeps it through later changes: the court's 6.1 × 13.4 m stays inside the lawn when a screen or a bed beside it grows.
+6. **Each space in turn**, built out with zone kinds — low planting, tall planting, a hedge or screen, lawn or meadow, a surface — until every part of it has a role; leave a blank only on purpose and say what it is for. One space per reply, then the next after the sign-off. Use the space under a big tree: shade planting, a seat at the edge of the crown, a path laid on bark — nothing dug or paved near the trunk.
+
+While zoning there are no catalog products, plants or objects, even when the user asks you to "refine" or "work out" a space: on a large garden that is zoning. The catalog waits until the zones are signed off and the user asks for detailing (Step 3).
+
 
 ### Step 3 — Detailing, in three passes (stop after each pass)
 Only when the user asks for it. Place surfaces and objects with `add_objects`, giving each object the `zoneId` it belongs to so the placement is checked; plant with `plant_zones` — you choose the plants and their shares, the editor places them. Sizes from `get_product_details` / `get_plant_info` / `search_products` are in metres.
@@ -164,7 +178,8 @@ Work through a **checklist**, not a rigid sequence. Zones progress independently
 - [ ] Geo-anchor set (address geocoded)
 - [ ] North orientation set
 - [ ] Context pins placed (doors, windows, gates, views)
-- [ ] Zones defined covering the usable area
+- [ ] Zones defined covering the usable area, their edges along the site's `axes` (or curving, for a flowing style)
+- [ ] Saved after each sign-off
 - [ ] Journal written with brief and key decisions
 
 ### Per-zone checklist
@@ -176,7 +191,7 @@ Work through a **checklist**, not a rigid sequence. Zones progress independently
 - [ ] Plant suitability verified via `get_plant_info` (sunlight, soil, hardiness)
 - [ ] All objects labeled with design role
 
-Zones are independent — you can fully detail one zone while another is still at the planning stage. Revisit any zone at any time.
+On a small garden zones are independent — you can fully detail one zone while another is still at the planning stage. On a large garden keep to the steps of Step 2 › large garden. Revisit any zone at any time.
 
 ## Verification
 

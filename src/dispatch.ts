@@ -181,7 +181,18 @@ export function createDispatcher(send: Send, designGuide: string) {
         if (!boundary) {
           return textResult({ error: "No plot boundary. Call import_parcel (a parcel in Poland) or set_boundary first." });
         }
-        return textResult(siteAnalysis(boundary, shapes, rotation));
+        // The trees standing on the plot, so zones round a tree take its real crown (SC-234)
+        const rawObjects = await send("get_objects", {});
+        const objectList = (Array.isArray(rawObjects) ? rawObjects : (rawObjects as { objects?: unknown[] })?.objects ?? []) as
+          Array<{ id: string; type: string; x: number; y: number; width?: number; height?: number; label?: string; productName?: string }>;
+        const r1 = (v: number) => Math.round(v * 10) / 10;
+        const trees = objectList
+          .filter((o) => o.type === "plant" && Math.max(o.width ?? 0, o.height ?? 0) / DPM >= 4)
+          .map((o) => ({
+            id: o.id, name: o.label || o.productName || "tree",
+            trunk: { x: r1(o.x / DPM), y: r1(o.y / DPM) }, crownM: r1(Math.max(o.width ?? 0, o.height ?? 0) / DPM),
+          }));
+        return textResult({ ...siteAnalysis(boundary, shapes, rotation), trees });
       }
 
       // Zones: absolute polygon/path → editor form; lock after creating; answer with checks

@@ -138,6 +138,81 @@ function edgeNearPolygon(a: Pt, b: Pt, poly: Pt[], tol: number): boolean {
 
 // ── Site analysis ──
 
+/** From this much garden (the parcel less the house) a garden is large: zoned in steps (SC-231) */
+export const LARGE_GARDEN_M2 = 400;
+
+/**
+ * The site's main directions in the tool's coordinates, degrees from east (y south), mod 180: the house's walls
+ * and the boundary's edges of 5 m or more, longest first, those within 2° of each other merged (SC-230)
+ */
+export function siteAxes(boundary: Pt[], house: Pt[] | null): Array<{ deg: number; from: string }> {
+  const edges = [
+    ...(house ?? []).map((a, i, p) => ({ a, b: p[(i + 1) % p.length], from: "house", min: 1 })),
+    ...boundary.map((a, i, p) => ({ a, b: p[(i + 1) % p.length], from: "boundary", min: 5 })),
+  ].map((e) => ({ ...e, len: Math.hypot(e.b.x - e.a.x, e.b.y - e.a.y) }))
+    .filter((e) => e.len >= e.min)
+    .sort((x, y) => y.len - x.len);
+  const out: Array<{ deg: number; from: string }> = [];
+  for (const e of edges) {
+    const deg = ((Math.atan2(e.b.y - e.a.y, e.b.x - e.a.x) * 180) / Math.PI + 360) % 180;
+    const near = out.find((o) => { const d = Math.abs(o.deg - deg) % 180; return Math.min(d, 180 - d) <= 2; });
+    if (near) { if (!near.from.split("+").includes(e.from)) near.from += `+${e.from}`; continue; }
+    out.push({ deg: round(deg, 1), from: e.from });
+  }
+  return out;
+}
+
+/**
+ * The garden left without a zone: cells of a 0.5 m grid inside the boundary, outside every building, that no zone
+ * covers, joined into patches; the largest first (≥ 2 m²), each with its area, centre and extent, so the agent finds
+ * the gaps itself rather than the user pointing at them (SC-231)
+ */
+export function blankAreas(boundary: Pt[], zones: Shape[], maxPatches = 8) {
+  const G = 0.5;
+  const xs = boundary.map((p) => p.x), ys = boundary.map((p) => p.y);
+  const x0 = Math.min(...xs), y0 = Math.min(...ys);
+  const nx = Math.ceil((Math.max(...xs) - x0) / G), ny = Math.ceil((Math.max(...ys) - y0) / G);
+  const buildings = zones.filter((z) => z.zoneType === "building").map((z) => z.poly);
+  const cover = zones.filter((z) => z.zoneType !== "building").map((z) => z.poly);
+  const blank = new Uint8Array(nx * ny);
+  let garden = 0, empty = 0;
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+    const p = { x: x0 + (i + 0.5) * G, y: y0 + (j + 0.5) * G };
+    if (!inside(p, boundary) || buildings.some((b) => inside(p, b))) continue;
+    garden++;
+    if (!cover.some((c) => inside(p, c))) { blank[j * nx + i] = 1; empty++; }
+  }
+  const patches: Array<{ areaM2: number; centre: Pt; from: Pt; to: Pt }> = [];
+  const seen = new Uint8Array(nx * ny);
+  for (let s = 0; s < blank.length; s++) {
+    if (!blank[s] || seen[s]) continue;
+    let n = 0, sx = 0, sy = 0, i0 = Infinity, i1 = -Infinity, j0 = Infinity, j1 = -Infinity;
+    const stack = [s];
+    seen[s] = 1;
+    while (stack.length) {
+      const c = stack.pop()!;
+      const i = c % nx, j = (c - i) / nx;
+      n++; sx += i; sy += j;
+      i0 = Math.min(i0, i); i1 = Math.max(i1, i); j0 = Math.min(j0, j); j1 = Math.max(j1, j);
+      for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const ii = i + di, jj = j + dj, q = jj * nx + ii;
+        if (ii >= 0 && ii < nx && jj >= 0 && jj < ny && blank[q] && !seen[q]) { seen[q] = 1; stack.push(q); }
+      }
+    }
+    if (n * G * G >= 2) patches.push({
+      areaM2: round(n * G * G, 1),
+      centre: rp({ x: x0 + (sx / n + 0.5) * G, y: y0 + (sy / n + 0.5) * G }),
+      from: rp({ x: x0 + i0 * G, y: y0 + j0 * G }),
+      to: rp({ x: x0 + (i1 + 1) * G, y: y0 + (j1 + 1) * G }),
+    });
+  }
+  patches.sort((a, b) => b.areaM2 - a.areaM2);
+  return {
+    m2: round(empty * G * G, 1), shareOfGarden: garden ? round(empty / garden, 3) : 0,
+    patches: patches.slice(0, maxPatches), morePatches: Math.max(0, patches.length - maxPatches),
+  };
+}
+
 export function siteAnalysis(boundary: Pt[], zones: Shape[], rotation: number) {
   const buildings = zones.filter((z) => z.zoneType === "building");
   const inParcel = buildings.filter((b) => inside(centroid(b.poly), boundary));
@@ -199,11 +274,18 @@ export function siteAnalysis(boundary: Pt[], zones: Shape[], rotation: number) {
     },
     neighbours,
     gardenAreaM2: round(area(boundary) - (area(hp) - outsideArea(hp, boundary)), 1),
+    largeGarden: area(boundary) - (area(hp) - outsideArea(hp, boundary)) >= LARGE_GARDEN_M2,
+    axes: siteAxes(boundary, hp),
+    blank: blankAreas(boundary, zones),
     howToUse: [
       "Doors and windows sit ON a facade line: pick a point between `from` and `to` of the facade on the side the brief or photos indicate (e.g. 30% along: from + 0.3·(to−from)).",
       "`gardenDepth` is the free distance from the facade midpoint straight out to the parcel boundary — compare it with the minimum size of anything you want to place on that side (a terrace for 6 needs ≥3.5 m).",
       "A facade with `sharedWallWith` is a party wall: no doors, no garden in front of it.",
       "`outward` is the facade's unit normal; a pin 0.3–0.5 m out from the facade along it marks a door clearly.",
+      "`axes` are the site's main directions (degrees from east, y south): draw zone edges along them — the house walls and the fences — not along north/east, unless an axis runs north.",
+      `\`largeGarden\` (${LARGE_GARDEN_M2} m² of garden or more): zone it in steps — feasibility and style first, your concept, the spaces, their connections, then each space — with a sign-off after each (the guide's Step 2 › Large garden).`,
+      "`trees` are the trees standing on the plot, each with its trunk and crown width: draw zones under and round a tree by its real crown, not by eye.",
+      "`blank` is the garden no zone covers yet, its largest patches first (`from`–`to` is each patch's extent): call this again after each step and, before you report, fill each patch or say what it is for (e.g. the corridor the next step's path takes).",
     ],
   };
 }
