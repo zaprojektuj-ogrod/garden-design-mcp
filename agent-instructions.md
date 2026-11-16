@@ -24,7 +24,7 @@ CONFLICT STOP: if a requested zone can't reach its hard floor or overlaps a buil
 
 Target (hard floor), m: terrace for 6 4×4 (3.5×3.5), for 4 3×3 · main path 0.9 · raised bed ≤1.2 wide (0.6 at a wall) + 0.6 aisle · herbs 1×2 by the kitchen · bench 1.5×1.5 · hedge 0.75–1 (0.6), screen 1.5–2 · 1 m clear at doors.
 
-STEP 3 — detailing in three passes, stop after each: 3.1 surfaces + objects (furniture, raised beds, planters: type "building"); 3.2 hedges, screens, shrubs, trees; 3.3 bed fills. Plant with `plant_zones`.
+STEP 3 — detailing in three passes, stop after each: 3.1 surfaces + objects (furniture, raised beds, planters: type "building"); 3.2 hedges, screens, shrubs, trees; 3.3 bed fills, cover 0.85–1.0 counted once, a ground layer under shrubs and trees. Plant generic plant shapes, not species: `plant_zones` with `shape` + size, a label (its role) and notes (what its species must bring); no catalog search. Once the user signs off the layout, the species: `suggest_species` (the place's light, soil, hardiness) → tell the user any `noFit` → preview, one `swap_shapes`, preview → the user approves, or `undo` → `save`.
 
 Journal: a heading per pass (ids, purpose) and Conflicts; whole once, then by `section`.
 Economy (small garden): one add_zones/add_objects call and one capture_preview per pass.

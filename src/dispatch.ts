@@ -25,17 +25,75 @@ import {
   type Pt,
 } from "./geometry.js";
 import { replyText } from "./slim.js";
-import { planPlanting, coverOf, type Canopy } from "./planting.js";
+import { planPlanting, hedgeRuns, type Canopy, type PlantChoice } from "./planting.js";
+import { layeredCover, layerOf, boundsOf } from "./coverage.js";
 
 /** Zones whose ground takes no plants: plant_zones keeps plant centres out of them */
 const NO_PLANTING = new Set(["terrace", "path", "building", "entry", "parking", "lawn"]);
 
 interface PlantZoneSpec {
   zoneId: string;
-  plants?: Array<{ productId: string | number; share?: number; count?: number }>;
+  plants?: Array<{
+    productId?: string | number; shape?: string; width?: number; tall?: number;
+    share?: number; count?: number; label?: string; notes?: string;
+  }>;
   layout?: "groups" | "row";
   coverage?: number;
   replace?: boolean;
+}
+
+/** A shape as the editor sized it, metres (planting_sizes) */
+interface ShapeSize {
+  kind: string; widthM: number; depthM: number; heightM: number;
+  depthRange?: [number, number]; warnings?: string[]; error?: string;
+}
+
+/** planting_sizes: plant heights from the plant index, shapes sized within their forms' ranges, each form's kind */
+interface PlantingSizes {
+  heights?: Record<string, number>;
+  shapes?: ShapeSize[];
+  kinds?: Record<string, string>;
+}
+
+/** What get_objects gives of a plant or a shape (editor units; a shape's height in metres) */
+interface PlacedObject {
+  id: string; type: string; x: number; y: number; width?: number; height?: number; rotation?: number;
+  productId?: string; shape?: { shapeId: string; heightM: number };
+}
+
+/** A canopy plant_zones keeps clear of within its layer; no height = in every layer */
+type Planted = Canopy & { id: string; heightM?: number };
+
+type Choice = PlantChoice & { heightM?: number; form?: string; size?: ShapeSize; label?: string; notes?: string };
+
+const shapeKey = (p: { shape?: string; width?: number; tall?: number }) => `${p.shape}|${p.width ?? ""}|${p.tall ?? ""}`;
+
+/** Circles `diameter` apart along a line, standing for a hedge's or a climber's canopy */
+function alongLine(a: Pt, b: Pt, diameter: number): Canopy[] {
+  const len = Math.hypot(b.x - a.x, b.y - a.y);
+  const n = Math.max(1, Math.round(len / Math.max(diameter, 0.1)));
+  return Array.from({ length: n }, (_, i) => {
+    const t = (i + 0.5) / n;
+    return { x: a.x + t * (b.x - a.x), y: a.y + t * (b.y - a.y), footprint: diameter };
+  });
+}
+
+/** What a plant or a shape already on the plan covers, as canopies: a hedge or a climber as circles along its line */
+function canopiesOf(o: PlacedObject, sized: PlantingSizes | null): Planted[] {
+  const w = (o.width ?? 0) / DPM, d = (o.height ?? 0) / DPM;
+  const x = o.x / DPM, y = o.y / DPM;
+  if (o.type === "plant") {
+    return [{ id: o.id, x, y, footprint: Math.max(w, d), heightM: o.productId ? sized?.heights?.[String(o.productId)] : undefined }];
+  }
+  if (o.type !== "shape" || !o.shape) return [];
+  const kind = sized?.kinds?.[o.shape.shapeId];
+  if (kind === "hedge" || kind === "climber") {
+    const a = ((o.rotation ?? 0) * Math.PI) / 180;
+    const ux = Math.cos(a) * w / 2, uy = Math.sin(a) * w / 2;
+    return alongLine({ x: x - ux, y: y - uy }, { x: x + ux, y: y + uy }, Math.max(d, 0.1))
+      .map((c) => ({ ...c, id: o.id, heightM: o.shape!.heightM }));
+  }
+  return [{ id: o.id, x, y, footprint: Math.max(w, d), heightM: o.shape.heightM }];
 }
 
 /** Calls one editor method; `timeoutMs` matters only where the transport can time out */
@@ -87,11 +145,23 @@ function normaliseZoneSpec(spec: ZoneSpec): ZoneSpec {
 type ObjectSpec = Record<string, unknown> & {
   polygon?: Pt[];
   path?: { waypoints: Pt[]; width: number };
+  line?: Array<Pt | [number, number]>;
 };
 
-/** A surface given as an absolute `polygon` or `path` (metres, like a zone) → centre + relative points */
+/**
+ * A surface given as an absolute `polygon` or `path` (metres, like a zone) → centre + relative points;
+ * a hedge shape given as a `line` from one end to the other → its centre, length and turn
+ */
 export function normaliseObjectSpec(spec: ObjectSpec): Record<string, unknown> {
-  const { polygon, path, ...rest } = spec;
+  const { polygon, path, line, ...rest } = spec;
+  if (line) {
+    if (line.length !== 2) throw new Error("A line is two points: [[x1, y1], [x2, y2]]");
+    const [a, b] = line.map((p) => (Array.isArray(p) ? { x: p[0], y: p[1] } : p));
+    return {
+      ...rest, x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, width: Math.hypot(b.x - a.x, b.y - a.y),
+      rotation: (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI,
+    };
+  }
   if (polygon) {
     if (polygon.length < 3) throw new Error("A polygon surface needs at least 3 points");
     return { ...rest, type: rest.type ?? "polygon", ...fromAbsolutePolygon(polygon) };
@@ -246,26 +316,23 @@ export function createDispatcher(send: Send, designGuide: string) {
         args = { ...(args ?? {}), maxSize: PREVIEW_SIZE };
       }
 
-      // Planting: the agent picks the plants, the editor places them (planting.ts)
+      // Planting: the agent picks the plants — species or generic plant shapes — the editor places them (planting.ts)
       if (name === "plant_zones") {
         const specs = (args?.zones ?? []) as PlantZoneSpec[];
         if (!Array.isArray(specs) || specs.length === 0) {
-          return textResult({ error: "Give zones: [{ zoneId, plants: [{ productId, share or count }] }]" });
+          return textResult({ error: "Give zones: [{ zoneId, plants: [{ productId or shape, share or count }] }]" });
         }
         const [rawZones, rawObjects] = (await Promise.all([send("get_zones", {}), send("get_objects", {})])) as [
           Array<Parameters<typeof zoneShape>[0]>,
           unknown,
         ];
         const shapes = (rawZones ?? []).map(zoneShape);
-        const objectList = (Array.isArray(rawObjects) ? rawObjects : (rawObjects as { objects?: unknown[] })?.objects ?? []) as
-          Array<{ id: string; type: string; x: number; y: number; width?: number; height?: number }>;
-        let plantsNow: Array<Canopy & { id: string }> = objectList
-          .filter((o) => o.type === "plant")
-          .map((o) => ({ id: o.id, x: o.x / DPM, y: o.y / DPM, footprint: Math.max(o.width ?? 0, o.height ?? 0) / DPM }));
+        const objectList = (Array.isArray(rawObjects) ? rawObjects : (rawObjects as { objects?: unknown[] })?.objects ?? []) as PlacedObject[];
 
         // Each product's catalog footprint, m (plants are drawn at it)
         const sizes = new Map<string, number>();
-        const productIds = [...new Set(specs.flatMap((s) => (s.plants ?? []).map((p) => String(p.productId))))];
+        const asked = specs.flatMap((s) => s.plants ?? []);
+        const productIds = [...new Set(asked.filter((p) => !p.shape && p.productId !== undefined).map((p) => String(p.productId)))];
         await Promise.all(productIds.map(async (id) => {
           try {
             const p = (await send("get_product_details", { productId: id })) as { width?: number; height?: number };
@@ -273,6 +340,18 @@ export function createDispatcher(send: Send, designGuide: string) {
             if (size > 0) sizes.set(id, size);
           } catch { /* reported as missing below */ }
         }));
+        // Heights (plant index) and the shapes' sizes within their forms' ranges, from the editor; without
+        // them every plant shares one layer, as before the layers were told apart
+        const shapeAsks = [...new Map(asked.filter((p) => p.shape).map((p) => [shapeKey(p), { shape: p.shape, width: p.width, tall: p.tall }])).entries()];
+        let sized: PlantingSizes | null = null;
+        try {
+          sized = (await send("planting_sizes", {
+            productIds: [...new Set([...productIds, ...objectList.filter((o) => o.type === "plant" && o.productId).map((o) => String(o.productId))])],
+            shapes: shapeAsks.map(([, ask]) => ask),
+          })) as PlantingSizes;
+        } catch { sized = null; }
+        const shapeSize = new Map(shapeAsks.map(([key], i) => [key, sized?.shapes?.[i]]));
+        let plantsNow: Planted[] = objectList.flatMap((o) => canopiesOf(o, sized));
 
         const objects: Array<Record<string, unknown>> = [];
         const report: Array<Record<string, unknown>> = [];
@@ -280,33 +359,116 @@ export function createDispatcher(send: Send, designGuide: string) {
         for (const spec of specs) {
           const zone = shapes.find((s) => s.id === spec.zoneId);
           if (!zone) { report.push({ zoneId: spec.zoneId, error: "No such zone" }); continue; }
-          const asked = (spec.plants ?? []).map((p) => ({ ...p, productId: String(p.productId) }));
-          const missing = asked.filter((p) => !sizes.has(p.productId)).map((p) => p.productId);
-          const choices = asked.filter((p) => sizes.has(p.productId))
-            .map((p) => ({ productId: p.productId, footprint: sizes.get(p.productId)!, share: p.share, count: p.count }));
-          if (choices.length === 0) { report.push({ zoneId: zone.id, error: "No catalog size for these products", missing }); continue; }
+          const missing: string[] = [];
+          const warnings: string[] = [];
+          const choices: Choice[] = [];
+          const hedges: Array<{ form: string; size: ShapeSize; label?: string; notes?: string }> = [];
+          for (const [i, p] of (spec.plants ?? []).entries()) {
+            if (p.shape) {
+              const size = shapeSize.get(shapeKey(p));
+              if (!size || size.error) { missing.push(p.shape); if (size?.error) warnings.push(size.error); continue; }
+              warnings.push(...(size.warnings ?? []));
+              if (size.kind === "hedge") { hedges.push({ form: p.shape, size, label: p.label, notes: p.notes }); continue; }
+              choices.push({
+                productId: `shape:${p.shape}#${i}`, footprint: Math.max(size.widthM, size.depthM), share: p.share, count: p.count,
+                heightM: size.heightM, form: p.shape, size, label: p.label, notes: p.notes,
+              });
+            } else {
+              const id = String(p.productId);
+              if (!sizes.has(id)) { missing.push(id); continue; }
+              choices.push({ productId: id, footprint: sizes.get(id)!, share: p.share, count: p.count, heightM: sized?.heights?.[id], label: p.label });
+            }
+          }
+          if (choices.length === 0 && hedges.length === 0) {
+            report.push({
+              zoneId: zone.id,
+              error: (spec.plants ?? []).some((p) => p.shape) ? "No size for these plants or shapes" : "No catalog size for these products",
+              missing,
+              ...(warnings.length ? { warnings } : {}),
+            });
+            continue;
+          }
           if (spec.replace) {
-            const gone = plantsNow.filter((c) => c.id && inside(c, zone.poly));
-            removed.push(...gone.map((c) => c.id));
-            plantsNow = plantsNow.filter((c) => !gone.includes(c));
+            const gone = new Set(plantsNow.filter((c) => c.id && inside(c, zone.poly)).map((c) => c.id));
+            removed.push(...gone);
+            plantsNow = plantsNow.filter((c) => !gone.has(c.id));
           }
           // A bed set into paving or lawn (pots at the door, a clump by the bench) is planted all the same
           const avoid = shapes
             .filter((s) => s.id !== zone.id && NO_PLANTING.has(s.zoneType) && !zone.poly.every((p) => inside(p, s.poly)))
             .map((s) => s.poly);
-          const plan = planPlanting(zone.poly, choices, { layout: spec.layout, coverage: spec.coverage, existing: plantsNow, avoid });
-          for (const p of plan.placed) {
-            objects.push({ type: "plant", productId: p.productId, x: p.x, y: p.y, zoneId: zone.id });
-            plantsNow.push({ id: "", x: p.x, y: p.y, footprint: sizes.get(p.productId)! });
+
+          // A hedge shape: one line along each straight run of the zone, as wide as the zone (within its range)
+          const hedgeLines: Array<{ form: string; lines: number; lengthM: number }> = [];
+          for (const h of hedges) {
+            const { runs, width } = hedgeRuns(zone.poly);
+            const depth = Math.min(Math.max(width, h.size.depthRange?.[0] ?? 0), h.size.depthRange?.[1] ?? Infinity);
+            let length = 0;
+            let lines = 0;
+            for (const [a, b] of runs) {
+              const len = Math.hypot(b.x - a.x, b.y - a.y);
+              if (len < 0.3) continue;
+              length += len;
+              lines++;
+              const rotation = (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI;
+              objects.push({
+                type: "shape", shape: h.form, x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, width: len, height: depth, tall: h.size.heightM,
+                rotation, zoneId: zone.id, ...(h.label ? { label: h.label } : {}), ...(h.notes ? { notes: h.notes } : {}),
+              });
+              plantsNow.push(...alongLine(a, b, depth).map((c) => ({ ...c, id: "", heightM: h.size.heightM })));
+            }
+            hedgeLines.push({ form: h.form, lines, lengthM: Math.round(length * 10) / 10 });
           }
+
+          // Each height layer is planted on its own, tallest first: ground cover goes under shrubs and
+          // trees, and the cover aimed at is each layer's
+          const byLayer = new Map<string, Choice[]>();
+          for (const c of choices) {
+            const key = c.heightM === undefined ? "any" : layerOf(c.heightM);
+            byLayer.set(key, [...(byLayer.get(key) ?? []), c]);
+          }
+          let layout: "groups" | "row" | undefined;
+          const short: Record<string, number> = {};
+          const placedCount = new Map<string, number>();
+          for (const key of ["tree", "shrub", "ground", "any"]) {
+            const group = byLayer.get(key);
+            if (!group) continue;
+            const existing = plantsNow.filter((c) => key === "any" || c.heightM === undefined || layerOf(c.heightM) === key);
+            const plan = planPlanting(zone.poly, group, { layout: spec.layout, coverage: spec.coverage, existing, avoid });
+            layout ??= plan.layout;
+            Object.assign(short, plan.short);
+            for (const p of plan.placed) {
+              const c = group.find((g) => g.productId === p.productId)!;
+              placedCount.set(c.productId, (placedCount.get(c.productId) ?? 0) + 1);
+              objects.push(c.form && c.size
+                ? {
+                  type: "shape", shape: c.form, x: p.x, y: p.y, width: c.size.widthM, height: c.size.depthM, tall: c.size.heightM,
+                  zoneId: zone.id, ...(c.label ? { label: c.label } : {}), ...(c.notes ? { notes: c.notes } : {}),
+                }
+                : { type: "plant", productId: c.productId, x: p.x, y: p.y, zoneId: zone.id, ...(c.label ? { label: c.label } : {}) });
+              plantsNow.push({ id: "", x: p.x, y: p.y, footprint: c.footprint, heightM: c.heightM });
+            }
+          }
+          const cover = layeredCover(boundsOf(zone.poly), (q) => inside(q, zone.poly),
+            plantsNow.map((c) => ({ kind: "circle" as const, x: c.x, y: c.y, diameter: c.footprint, heightM: c.heightM })));
+          const r2 = (v: number) => Math.round(v * 100) / 100;
+          const nameOf = (key: string) => choices.find((c) => c.productId === key)?.form ?? key;
           report.push({
             zoneId: zone.id,
-            layout: plan.layout,
+            ...(layout ? { layout } : {}),
             // the catalog size too: it can differ from search_plants' botanical spread
-            planted: choices.map((c) => ({ productId: c.productId, size: c.footprint, count: plan.placed.filter((p) => p.productId === c.productId).length })),
-            cover: Math.round(coverOf(zone.poly, plantsNow) * 100) / 100,
-            ...(Object.keys(plan.short).length ? { short: plan.short } : {}),
+            planted: [
+              ...choices.map((c) => (c.form
+                ? { shape: c.form, size: r2(c.footprint), tall: r2(c.heightM ?? 0), count: placedCount.get(c.productId) ?? 0 }
+                : { productId: c.productId, size: c.footprint, count: placedCount.get(c.productId) ?? 0 })),
+              ...hedgeLines.map((h) => ({ shape: h.form, lines: h.lines, lengthM: h.lengthM })),
+            ],
+            // counted once where plants overlap; each height layer on its own
+            cover: r2(cover.cover),
+            ...(sized ? { coverByLayer: { ground: r2(cover.layers.ground), shrub: r2(cover.layers.shrub), tree: r2(cover.layers.tree) } } : {}),
+            ...(Object.keys(short).length ? { short: Object.fromEntries(Object.entries(short).map(([k, v]) => [nameOf(k), v])) } : {}),
             ...(missing.length ? { missing } : {}),
+            ...(warnings.length ? { warnings } : {}),
           });
         }
         if (removed.length) await send("delete_objects", { ids: removed });

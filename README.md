@@ -134,7 +134,7 @@ Another 17 tools still answer when called but aren't listed, since every listed 
 | `delete_zone` | Delete a zone by ID |
 | `get_zones` | Get all zones |
 | `get_objects_in_zone` | List objects whose centers fall inside a zone |
-| `get_zone_analysis` | Density and coverage of a zone (planted area %, objects by category) |
+| `get_zone_analysis` | Density and cover of a zone: planting cover counted once where plants and shapes overlap, the cover of each height layer (ground, shrub, tree), objects by category |
 
 ### Phase 4: Detailing
 | Tool | Description |
@@ -147,9 +147,11 @@ Another 17 tools still answer when called but aren't listed, since every listed 
 | `get_subcategories` | Leaf categories under a parent category |
 | `get_product_details` | Full product details by ID |
 | `get_objects` | Get all garden objects (filter by layer; `count_only: true` for counts only) |
-| `add_objects` | Add plants, architecture or ground surfaces, one or many (`productId` or `productQuery`) |
-| `plant_zones` | Plant zones with the plants the assistant chose: the editor places them in groups of 3–7 in beds or in one row in a hedge, clear of paths, terraces, lawn and the plants already there, and reports each zone's canopy cover |
-| `update_objects` | Update objects (position, size, rotation, product), one or many |
+| `add_objects` | Add plants, architecture, ground surfaces or generic plant shapes, one or many (`productId` or `productQuery`; a shape by its form and size) |
+| `plant_zones` | Plant zones with the plants or generic plant shapes the assistant chose: the editor places them in groups of 3–7 in beds, in one row in a screen, a hedge shape as a line along its zone, clear of paths, terraces, lawn and the plants of their own height layer already there (ground cover goes under shrubs and trees), and reports each zone's cover, counted once and per layer |
+| `suggest_species` | The species that fit generic plant shapes — their habit and size, the place's light, soil and hardiness, species a shape's label names first; shapes nothing fits listed apart |
+| `swap_shapes` | Swap shapes for species in place, each at its own catalog size (a hedge as a row, ground cover as one species or a mix); one undo brings the shapes back |
+| `update_objects` | Update objects (position, size, rotation, product; a shape's size within its form's range), one or many |
 | `delete_objects` | Delete objects by ID, one or many |
 
 ### Phase 5: Review

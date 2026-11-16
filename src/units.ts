@@ -186,6 +186,9 @@ const SKIP_OUTPUT_CONVERSION = new Set([
   // the house tools take and return metres themselves (G36)
   "house_build", "house_set_block", "house_set_roof", "house_set_walls", "house_set_openings", "house_get", "house_preview",
   "connection_status",
+  // the species for generic plant shapes: sizes in their own words, ids only
+  "suggest_species",
+  "swap_shapes",
   "search_products",
   "get_categories",
   "get_product_details",
@@ -212,6 +215,9 @@ const SKIP_INPUT_CONVERSION = new Set([
   // the house tools take and return metres themselves (G36)
   "house_build", "house_set_block", "house_set_roof", "house_set_walls", "house_set_openings", "house_get", "house_preview",
   "connection_status",
+  // the species for generic plant shapes: sizes in their own words, ids only
+  "suggest_species",
+  "swap_shapes",
   "search_products",
   "get_categories",
   "get_product_details",

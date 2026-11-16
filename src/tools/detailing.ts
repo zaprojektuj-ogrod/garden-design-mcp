@@ -1,14 +1,47 @@
-// Phase 4: Detailing tools — product catalog, garden object CRUD
+// Phase 4: Detailing tools — product catalog, garden object CRUD, generic plant shapes
 
 import type { Tool } from "./types.js";
+
+/** The generic plant shapes' forms (public/shapes/shapes.json), in the order the editor offers them */
+export const SHAPE_FORMS = [
+  "tree_round", "tree_oval", "tree_conical", "tree_columnar", "tree_weeping", "tree_spreading",
+  "shrub_round", "shrub_conical", "shrub_columnar", "shrub_upright", "shrub_spreading",
+  "clump", "groundcover", "hedge", "climber",
+];
+
+/** The forms in a few lines: what each stands for and its range, so sizes are given within it */
+export const SHAPE_NOTE =
+  "Generic plant shapes stand for no species, only a form (SC-191): trees tree_round/oval/conical/columnar/weeping/spreading " +
+  "(2–25 m tall); shrubs shrub_round/conical/columnar/upright/spreading (0.2–6 m); clump = a drift of perennials or grasses " +
+  "(0.15–2.5 m tall, width = the drift's diameter); groundcover = a low mat (≤ 0.5 m, width = its diameter: 1, 2 or 4 m); " +
+  "hedge = a line (0.3–4 m tall, 0.3–2 m thick); climber = a panel on a wall or fence. Sizes are mature, in metres; " +
+  "a size outside the form's range is set to its edge and the reply says so; with no size, the form's middle size.";
 
 const OBJECT_SPEC_SCHEMA = {
   type: "object" as const,
   properties: {
     type: {
       type: "string",
-      enum: ["plant", "building", "rectangle", "ellipse", "polygon", "path"],
-      description: "Object type",
+      enum: ["plant", "building", "rectangle", "ellipse", "polygon", "path", "shape"],
+      description: "Object type; `shape` = a generic plant shape (no product): give `shape`, not productId",
+    },
+    shape: {
+      type: "string",
+      enum: SHAPE_FORMS,
+      description: "type=shape: the form",
+    },
+    tall: {
+      type: "number",
+      description: "type=shape: how tall it grows, m (a crown given only its width keeps its proportions)",
+    },
+    line: {
+      type: "array",
+      description: "type=shape, a hedge: [[x1, y1], [x2, y2]] in metres, end to end — sets x, y, width (its length) and rotation",
+      items: { type: "array", items: { type: "number" } },
+    },
+    notes: {
+      type: "string",
+      description: "type=shape: what the species must bring, for the swap later (evergreen, flowers, sun or shade); a species the designer named goes in the label",
     },
     productId: {
       type: "string",
@@ -29,11 +62,11 @@ const OBJECT_SPEC_SCHEMA = {
     },
     width: {
       type: "number",
-      description: "Footprint size east–west, m; optional, defaults to product catalog value. Ignored for plants: they are drawn at their mature catalog size and cannot be resized.",
+      description: "Footprint size east–west, m; optional, defaults to product catalog value. Ignored for plants: they are drawn at their mature catalog size and cannot be resized. A shape: its spread, or a hedge's or climber's length.",
     },
     height: {
       type: "number",
-      description: "Footprint size north–south (plan depth, not how tall it is), m; optional, defaults to product catalog value. Ignored for plants (mature catalog size).",
+      description: "Footprint size north–south (plan depth, not how tall it is), m; optional, defaults to product catalog value. Ignored for plants (mature catalog size). A shape: its depth across (a hedge's thickness, an oval mat's other diameter).",
     },
     rotation: {
       type: "number",
@@ -147,7 +180,7 @@ export const tools: Tool[] = [
   {
     name: "get_categories",
     description:
-      "Get product categories for a layer. Architecture and ground are flat (1-level): any returned id works directly with search_products.categoryId. Plants use a 2-level tree: this returns only the 6 top-level groups (Drzewa, Krzewy, Pnącza, Byliny, Trawy Ozdobne, Pokroje); to filter search_products by plant category you must follow up with get_subcategories(<top-level id>) and pass a leaf id.",
+      "Get product categories for a layer. Architecture and ground are flat (1-level): any returned id works directly with search_products.categoryId. Plants use a 2-level tree: this returns only the top-level groups (Drzewa, Krzewy, Pnącza, Byliny, Trawy Ozdobne); to filter search_products by plant category you must follow up with get_subcategories(<top-level id>) and pass a leaf id.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -327,7 +360,7 @@ export const tools: Tool[] = [
   {
     name: "add_objects",
     description:
-      "Add garden objects (one or more) in one call. Type determines rendering: 'plant' for plants, 'building' for architecture, 'rectangle'/'ellipse'/'polygon'/'path' for ground shapes; a path takes pathWaypoints (centreline) and pathWidth. Each object takes productId OR productQuery (a name search resolved server-side); width/height are optional (catalog defaults). Returns `ids` in input order (null where one failed) and `issues` for failures and warnings.",
+      "Add garden objects (one or more) in one call. Type determines rendering: 'plant' for plants, 'building' for architecture, 'rectangle'/'ellipse'/'polygon'/'path' for ground shapes, 'shape' for a generic plant shape; a path takes pathWaypoints (centreline) and pathWidth. Each object takes productId OR productQuery (a name search resolved server-side) — a shape takes `shape` instead, sized by width (spread or length), height (depth across) and `tall`; a hedge shape can take `line`. Width/height are optional (catalog defaults; a shape's middle size). Returns `ids` in input order (null where one failed) and `issues` for failures and warnings.\n\n" + SHAPE_NOTE,
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -343,7 +376,7 @@ export const tools: Tool[] = [
   {
     name: "plant_zones",
     description:
-      "Plant zones with the plants you chose — the editor places them: in beds, groups of 3–7 of a kind with canopies touching; in hedge and screen zones, one closed row. Plants take their catalog size, line up with the zone's longest edge, and stay clear of paths, terraces, buildings, entries, parking, lawn and the plants already there. Use it for all planting (trees and specimen shrubs too, with `count`) instead of placing plants with add_objects — and plant every zone of a pass in one call. Replies per zone: how many of each it planted and the canopy `cover` (aim 0.85–1.0).",
+      "Plant zones with the plants you chose — species (productId) or generic plant shapes (shape + size) — the editor places them: in beds, groups of 3–7 of a kind with canopies touching; in hedge and screen zones, one closed row; a hedge shape becomes one line along the zone, as wide as the zone. Species take their catalog size, shapes the size you give. They line up with the zone's longest edge and stay clear of paths, terraces, buildings, entries, parking, lawn and the plants already there of their own height layer — ground cover goes under shrubs and trees. Use it for all planting (trees and specimen shrubs too, with `count`) instead of placing plants with add_objects — and plant every zone of a pass in one call. Replies per zone: how many of each it planted, the `cover` counted once (aim 0.85–1.0) and `coverByLayer` (ground < 0.5 m, shrub < 3 m, tree).",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -358,11 +391,15 @@ export const tools: Tool[] = [
                 items: {
                   type: "object",
                   properties: {
-                    productId: { type: "string" },
+                    productId: { type: "string", description: "A species, or give `shape`" },
+                    shape: { type: "string", enum: SHAPE_FORMS, description: "A generic plant shape's form instead of a species" },
+                    width: { type: "number", description: "shape: its spread (a clump's or mat's diameter), m; default the form's middle size" },
+                    tall: { type: "number", description: "shape: how tall it grows, m" },
                     share: { type: "number", description: "Relative share of the zone's planted area (default 1): more for the main filler and groundcover, less for accents" },
                     count: { type: "number", description: "An exact number instead of a share, e.g. 1 tree or 3 shrubs" },
+                    label: { type: "string", description: "Its role in the design (and a species the designer named)" },
+                    notes: { type: "string", description: "shape: what the species must bring, for the swap" },
                   },
-                  required: ["productId"],
                 },
               },
               layout: { type: "string", enum: ["groups", "row"], description: "groups for beds, row for a hedge or screen; default row when the zone is narrower than 1.6 plants" },
@@ -421,7 +458,8 @@ export const tools: Tool[] = [
     name: "update_objects",
     description:
       "Update garden objects (one or more) in one call: position, size, rotation, label, or swap the product with productId or productQuery " +
-      "(plants and buildings adopt the new catalog size; ground shapes keep their shape and swap texture only). Returns `ids` and `issues`.",
+      "(plants and buildings adopt the new catalog size; ground shapes keep their shape and swap texture only). A generic plant shape resizes " +
+      "(width, height, tall) within its form's range and keeps its form; it becomes a species with swap_shapes. Returns `ids` and `issues`.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -439,6 +477,8 @@ export const tools: Tool[] = [
               rotation: { type: "number", description: "New rotation in degrees" },
               elevation: { type: "number", description: "New elevation in meters — ground surfaces only; architecture keeps its catalog height" },
               label: { type: "string", description: "New label" },
+              tall: { type: "number", description: "A shape: how tall it grows, m (a new width alone keeps a crown's proportions; sizes stay within the form's range)" },
+              notes: { type: "string", description: "A shape: the notes for its species" },
               productId: {
                 type: "string",
                 description:

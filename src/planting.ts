@@ -261,7 +261,60 @@ export function planPlanting(poly: Pt[], plants: PlantChoice[], options: Plantin
   return { placed, short, layout };
 }
 
-/** Canopy cover of a zone: the plants whose centre is in it, as get_zone_analysis counts them */
+/** A polyline with the points that add no turn left out (Douglas–Peucker, `tolerance` m) */
+function simplify(points: Pt[], tolerance: number): Pt[] {
+  if (points.length <= 2) return points;
+  let worst = 0, at = 0;
+  for (let i = 1; i < points.length - 1; i++) {
+    const d = segDist(points[i], points[0], points[points.length - 1]);
+    if (d > worst) { worst = d; at = i; }
+  }
+  if (worst <= tolerance) return [points[0], points[points.length - 1]];
+  return [...simplify(points.slice(0, at + 1), tolerance).slice(0, -1), ...simplify(points.slice(at), tolerance)];
+}
+
+const polyLength = (points: Pt[]) => points.slice(1).reduce((n, p, i) => n + Math.hypot(p.x - points[i].x, p.y - points[i].y), 0);
+
+/**
+ * A hedge along a zone: the zone's centreline as straight runs, and the zone's width across it. A zone
+ * drawn as a corridor (a `path` zone: one side out, the other back) gives its own centreline, bends
+ * included; any other zone a line down the middle along its longest edge.
+ */
+export function hedgeRuns(poly: Pt[]): { runs: Array<[Pt, Pt]>; width: number } {
+  const n = poly.length;
+  // A corridor: vertex i and vertex n-1-i face each other across it
+  if (n >= 4 && n % 2 === 0) {
+    const mids: Pt[] = [];
+    const widths: number[] = [];
+    for (let i = 0; i < n / 2; i++) {
+      const a = poly[i], b = poly[n - 1 - i];
+      mids.push({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+      widths.push(Math.hypot(a.x - b.x, a.y - b.y));
+    }
+    const width = [...widths].sort((p, q) => p - q)[Math.floor(widths.length / 2)];
+    const even = Math.max(...widths) <= 2.5 * Math.min(...widths);
+    if (even && width > 0 && polyLength(mids) >= 2 * width) {
+      const line = simplify(mids, Math.max(0.1, width / 4));
+      return { runs: line.slice(1).map((p, i) => [line[i], p] as [Pt, Pt]), width };
+    }
+  }
+  // Any other zone: down the middle along its main axis, following its cross-sections
+  const f = frameOf(poly);
+  const local = poly.map(f.toLocal);
+  const { s0, s1 } = f.range;
+  const step = Math.max(0.25, (s1 - s0) / 200);
+  const centre: Pt[] = [];
+  for (let s = s0 + 0.01; s <= s1 - 0.01 + 1e-9; s += step) {
+    const cut = crossSection(local, s);
+    if (cut) centre.push(f.toWorld(s, (cut[0] + cut[1]) / 2));
+  }
+  const width = minWidth(poly);
+  if (centre.length < 2) return { runs: [], width };
+  const line = simplify(centre, Math.max(0.1, width / 4));
+  return { runs: line.slice(1).map((p, i) => [line[i], p] as [Pt, Pt]), width };
+}
+
+/** Canopy cover of a zone, added up: the plants whose centre is in it — the planting's own aim, plants of one layer touching */
 export function coverOf(poly: Pt[], canopies: Canopy[]): number {
   const a = area(poly);
   return a ? canopies.filter((c) => inside(c, poly)).reduce((n, c) => n + canopyArea(c.footprint), 0) / a : 0;

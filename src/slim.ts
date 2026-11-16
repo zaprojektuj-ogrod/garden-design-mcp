@@ -54,7 +54,7 @@ function slimBatch(r: Obj): Obj {
 function groupObjects(objects: Obj[]): Obj[] {
   const groups = new Map<string, Obj & { ids: unknown[] }>()
   for (const o of objects) {
-    const k = `${o.type}|${o.productName ?? o.label ?? ''}|${o.spread ?? ''}`
+    const k = `${o.type}|${o.shape ?? o.productName ?? o.label ?? ''}|${o.spread ?? ''}`
     let g = groups.get(k)
     if (!g) {
       const { id: _id, ...about } = o
@@ -64,6 +64,13 @@ function groupObjects(objects: Obj[]): Obj[] {
     g.ids.push(o.id)
   }
   return [...groups.values()]
+}
+
+/** A generic plant shape as the model needs it: its form, footprint, how tall, label and notes — not its look */
+function slimShape(o: Obj): Obj {
+  const { shape, productId: _productId, ...rest } = o
+  const s = (shape ?? {}) as Obj
+  return { ...rest, form: s.shapeId, tall: s.heightM, ...(s.notes ? { notes: s.notes } : {}) }
 }
 
 /** An object or zone without the fields that are zero by default */
@@ -122,7 +129,7 @@ export function slimResult(name: string, result: unknown, args: Obj = {}): unkno
     case 'get_objects_in_zone': {
       const list = Array.isArray(r) ? r : Array.isArray(r.objects) ? r.objects : null
       if (!list) return r
-      const slim = (list as Obj[]).map(o => dropDefaults(o, ['z', 'zIndex', 'elevation', 'rotation']))
+      const slim = (list as Obj[]).map(o => dropDefaults(o.type === 'shape' ? slimShape(o) : o, ['z', 'zIndex', 'elevation', 'rotation']))
       return Array.isArray(r) ? slim : { ...r, objects: slim }
     }
     case 'get_zones':

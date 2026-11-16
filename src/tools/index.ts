@@ -4,6 +4,7 @@ import { tools as siteTools } from "./site.js";
 import { tools as contextTools } from "./context.js";
 import { tools as zonesTools } from "./zones.js";
 import { tools as detailingTools } from "./detailing.js";
+import { tools as shapeTools } from "./shapes.js";
 import { tools as reviewTools } from "./review.js";
 import { tools as houseTools } from "./house.js";
 
@@ -13,6 +14,7 @@ export const EVERY_TOOL = [
   ...contextTools,
   ...zonesTools,
   ...detailingTools,
+  ...shapeTools,
   ...reviewTools,
   ...houseTools,
 ];

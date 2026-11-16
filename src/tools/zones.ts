@@ -152,7 +152,7 @@ export const tools: Tool[] = [
   },
   {
     name: "get_zone_analysis",
-    description: "Analyzes a zone's contents: object count, coverage %, planting density rating, and boundary violation warnings. Use after placing objects to validate density and spatial relationships.",
+    description: "Analyzes a zone's contents: object count, planting cover counted once where plants and shapes overlap (`coveragePercent`), the cover of each height layer (`coverByLayer`: ground under 0.5 m, shrub under 3 m, tree), the footprints added up (`footprintSumPercent`), a density rating (dense = one layer crowding itself), and boundary violation warnings.",
     inputSchema: {
       type: "object" as const,
       properties: {
