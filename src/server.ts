@@ -19,6 +19,7 @@ import { sendToBrowser, isConnected, WS_PORT } from "./bridge.js";
 import { RESOURCES, readResource } from "./resources.js";
 import { PROMPTS, getPromptMessages } from "./prompts.js";
 import { createDispatcher, DESIGN_GUIDE_TOOL } from "./dispatch.js";
+import { loadCards, designCards, DESIGN_CARDS_TOOL } from "./cards.js";
 
 // Source of truth: package.json. Resolves to ../package.json from dist/server.js
 // at runtime (and the same from src/server.ts under tsx, since import.meta.url
@@ -49,6 +50,12 @@ if (MCP_INSTRUCTIONS.length > INSTRUCTIONS_LIMIT) {
 
 const dispatcher = createDispatcher(sendToBrowser, DESIGN_GUIDE);
 
+// Design knowledge cards, served from a local library folder when GARDEN_KNOWLEDGE_DIR names one (cards.ts);
+// without it the tool is not listed
+const KNOWLEDGE_DIR = process.env.GARDEN_KNOWLEDGE_DIR;
+const CARDS = KNOWLEDGE_DIR ? loadCards(KNOWLEDGE_DIR) : null;
+if (CARDS) console.error(`[MCP] design cards: ${CARDS.size} from ${KNOWLEDGE_DIR}`);
+
 export function createServer(): Server {
   const server = new Server(
     {
@@ -68,7 +75,7 @@ export function createServer(): Server {
   // ── Tools ──
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
-    return { tools: [...ALL_TOOLS, DESIGN_GUIDE_TOOL] };
+    return { tools: [...ALL_TOOLS, DESIGN_GUIDE_TOOL, ...(CARDS ? [DESIGN_CARDS_TOOL] : [])] };
   });
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
@@ -123,6 +130,10 @@ export function createServer(): Server {
             },
           ],
         };
+      }
+
+      if (name === "design_cards" && CARDS) {
+        return { content: [{ type: "text", text: designCards(CARDS, (args ?? {}) as Parameters<typeof designCards>[1]) }] };
       }
 
       return await dispatcher.callTool(name, args as Record<string, unknown> | undefined);

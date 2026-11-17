@@ -135,6 +135,10 @@ function edgeNearPolygon(a: Pt, b: Pt, poly: Pt[], tol: number): boolean {
   const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
   return poly.some((_, i) => segDist(mid, poly[i], poly[(i + 1) % poly.length]) < tol);
 }
+const perimeter = (poly: Pt[]) => poly.reduce((t, a, i) => { const b = poly[(i + 1) % poly.length]; return t + Math.hypot(b.x - a.x, b.y - a.y); }, 0);
+const polyDist = (p: Pt, poly: Pt[]) => Math.min(...poly.map((a, i) => segDist(p, a, poly[(i + 1) % poly.length])));
+/** A fence drawn as a building: thin — area over perimeter under 0.25 m, i.e. under about 0.5 m wide */
+const isFence = (b: Shape) => area(b.poly) < 0.25 * perimeter(b.poly);
 
 // ── Site analysis ──
 
@@ -180,12 +184,9 @@ export function blankAreas(boundary: Pt[], zones: Shape[], maxPatches = 12) {
   const nx = Math.ceil((Math.max(...xs) - x0) / G), ny = Math.ceil((Math.max(...ys) - y0) / G);
   const buildings = zones.filter((z) => z.zoneType === "building");
   const cover = zones.filter((z) => z.zoneType !== "building");
-  // a fence drawn as a building: thin (area over perimeter under 0.25 m, i.e. under about 0.5 m wide). The ground
-  // between a fence and the plot line is outside the garden, not a gap to fill
-  const perimeter = (poly: Pt[]) => poly.reduce((t, a, i) => { const b = poly[(i + 1) % poly.length]; return t + Math.hypot(b.x - a.x, b.y - a.y); }, 0);
-  const fenceShapes = buildings.filter((b) => area(b.poly) < 0.25 * perimeter(b.poly));
+  // the ground between a fence and the plot line is outside the garden, not a gap to fill
+  const fenceShapes = buildings.filter(isFence);
   const fences = new Set(fenceShapes.map((b) => b.id));
-  const polyDist = (p: Pt, poly: Pt[]) => Math.min(...poly.map((a, i) => segDist(p, a, poly[(i + 1) % poly.length])));
   // a fence thinner than the grid falls between its points, so the strip outside it is found by distance too:
   // within half a metre of a fence and three quarters of a metre of the plot line
   const atFence = (p: Pt) => fenceShapes.some((f) => polyDist(p, f.poly) <= 0.5) && polyDist(p, boundary) <= 0.75;
@@ -261,7 +262,65 @@ export function blankAreas(boundary: Pt[], zones: Shape[], maxPatches = 12) {
   };
 }
 
-export function siteAnalysis(boundary: Pt[], zones: Shape[], rotation: number) {
+type ViewPin = { id: string; pinType: string; x: number; y: number; label?: string };
+
+/** Where people stay in a garden: what a bad view is screened from */
+const PLACE_KINDS = new Set(["terrace", "relaxation", "activity", "lawn"]);
+
+/**
+ * Each bad view (a `view_bad` pin): the plot line `reach` metres either side of it, looked at from inside. A sightline
+ * straight in from the plot line that reaches a place people stay (a terrace, a seating or activity area, a lawn)
+ * within `depth` metres, crossing no screen on the way — a privacy screen, tall planting, or a building that isn't a
+ * fence — is the view still in sight: `seenFrom` gives that place and the stretch of plot line it sees (SC-238)
+ */
+export function badViews(boundary: Pt[], zones: Shape[], pins: ViewPin[], reach = 8, depth = 15) {
+  const screens = zones.filter((z) =>
+    z.zoneType === "privacy_screen" || z.zoneType === "tall_plants" ||
+    (z.zoneType === "building" && !isFence(z) && inside(centroid(z.poly), boundary)));
+  const places = zones.filter((z) => PLACE_KINDS.has(z.zoneType));
+  const edges = boundary.map((a, i) => ({ a, b: boundary[(i + 1) % boundary.length] }));
+  const lens = edges.map(({ a, b }) => Math.hypot(b.x - a.x, b.y - a.y));
+  const total = lens.reduce((t, l) => t + l, 0);
+  // the point `s` metres along the plot line, with the unit normal pointing into the plot
+  const along = (s: number): { q: Pt; n: Pt } => {
+    s = ((s % total) + total) % total;
+    let i = 0;
+    while (i < edges.length - 1 && s > lens[i]) s -= lens[i++];
+    const { a, b } = edges[i], l = lens[i] || 1, t = Math.min(1, s / l);
+    const q = { x: a.x + t * (b.x - a.x), y: a.y + t * (b.y - a.y) };
+    const n = { x: -(b.y - a.y) / l, y: (b.x - a.x) / l };
+    return inside({ x: q.x + 0.1 * n.x, y: q.y + 0.1 * n.y }, boundary) ? { q, n } : { q, n: { x: -n.x, y: -n.y } };
+  };
+  return pins.filter((p) => p.pinType === "view_bad").map((pin) => {
+    // where the pin meets the plot line, as metres along it
+    let best = { d: Infinity, s: 0 }, run = 0;
+    edges.forEach(({ a, b }, i) => {
+      const ex = b.x - a.x, ey = b.y - a.y, l2 = ex * ex + ey * ey;
+      const t = l2 ? Math.max(0, Math.min(1, ((pin.x - a.x) * ex + (pin.y - a.y) * ey) / l2)) : 0;
+      const d = Math.hypot(pin.x - a.x - t * ex, pin.y - a.y - t * ey);
+      if (d < best.d) best = { d, s: run + t * lens[i] };
+      run += lens[i];
+    });
+    const seen: Array<{ zone: string; label: string | null; from: Pt; to: Pt }> = [];
+    let current: (typeof seen)[number] | null = null;
+    for (let k = -reach * 2; k <= reach * 2; k++) {   // a sightline every 0.5 m
+      const { q, n } = along(best.s + k / 2);
+      let place: Shape | null = null;
+      for (let t = 0.25; t <= depth; t += 0.25) {
+        const p = { x: q.x + t * n.x, y: q.y + t * n.y };
+        if (!inside(p, boundary) || screens.some((z) => inside(p, z.poly))) break;
+        place = places.find((z) => inside(p, z.poly)) ?? null;
+        if (place) break;
+      }
+      if (place && current?.zone === place.id) current.to = rp(q);
+      else if (place) seen.push(current = { zone: place.id, label: place.label ?? null, from: rp(q), to: rp(q) });
+      else current = null;
+    }
+    return { id: pin.id, label: pin.label ?? null, seenFrom: seen };
+  });
+}
+
+export function siteAnalysis(boundary: Pt[], zones: Shape[], rotation: number, pins: ViewPin[] = []) {
   const buildings = zones.filter((z) => z.zoneType === "building");
   const inParcel = buildings.filter((b) => inside(centroid(b.poly), boundary));
   const house = [...inParcel].sort((a, b) => area(b.poly) - area(a.poly))[0];
@@ -325,6 +384,7 @@ export function siteAnalysis(boundary: Pt[], zones: Shape[], rotation: number) {
     largeGarden: area(boundary) - (area(hp) - outsideArea(hp, boundary)) >= LARGE_GARDEN_M2,
     axes: siteAxes(boundary, hp),
     blank: blankAreas(boundary, zones),
+    ...(pins.some((p) => p.pinType === "view_bad") ? { badViews: badViews(boundary, zones, pins) } : {}),
     howToUse: [
       "Doors and windows sit ON a facade line: pick a point between `from` and `to` of the facade on the side the brief or photos indicate (e.g. 30% along: from + 0.3·(to−from)).",
       "`gardenDepth` is the free distance from the facade midpoint straight out to the parcel boundary — compare it with the minimum size of anything you want to place on that side (a terrace for 6 needs ≥3.5 m).",
@@ -333,7 +393,8 @@ export function siteAnalysis(boundary: Pt[], zones: Shape[], rotation: number) {
       "`axes` are the site's main directions (degrees from east, y south): draw zone edges along them — the house walls and the fences — not along north/east, unless an axis runs north.",
       `\`largeGarden\` (${LARGE_GARDEN_M2} m² of garden or more): zone it in steps — feasibility and style first, your concept, the spaces, their connections, then each space — with a sign-off after each (the guide's Step 2 › Large garden).`,
       "`trees` are the trees standing on the plot, each with its trunk and crown width: draw zones under and round a tree by its real crown, not by eye.",
-      "`blank` is the garden no zone covers yet, its largest patches first down to thin slivers (`from`–`to` is each patch's extent; `between` is what it lies between — zones, a building, the `boundary` — so you know whose edge to move to close it; a patch with `bits` is a thin gap in that many pieces along the same edge, e.g. a zone stopping just short of the fence): call this again after each step and, before you report, fill each patch or say what it is for (e.g. the corridor the next step's path takes). `unlistedM2` is blank left off the list (bits under 1 m², or past the first patches; `morePatches` > 0: call again once the listed ones are closed).",
+      "`blank` is the garden no zone covers yet, its largest patches first down to thin slivers (`from`–`to` is each patch's extent; `between` is what it lies between — zones, a building, the `boundary` — so you know whose edge to move to close it; a patch with `bits` is a thin gap in that many pieces along the same edge, e.g. a zone stopping just short of the fence): call this again after each step and, before you report, fill each patch or say what it is for (e.g. the corridor the next step's path takes). `unlistedM2` is blank left off the list (bits under 1 m², or past the first patches; `morePatches` > 0: call again once the listed ones are closed). After the paths step the corridors are paths: a patch left then is a gap the user sees on the plan, slivers too.",
+      "`badViews` takes each bad view (a `view_bad` pin) with the plot line 8 m either side of it, looked at from inside: `seenFrom` lists each place people stay (a terrace, a seating or activity area, a lawn) that sees part of that stretch with no privacy screen, tall planting or building between — `from`–`to` is the stretch it sees. Before you report a step, screen each, or say why it stays open.",
     ],
   };
 }

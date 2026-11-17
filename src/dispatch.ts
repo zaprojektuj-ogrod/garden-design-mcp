@@ -262,7 +262,10 @@ export function createDispatcher(send: Send, designGuide: string) {
             id: o.id, name: o.label || o.productName || "tree",
             trunk: { x: r1(o.x / DPM), y: r1(o.y / DPM) }, crownM: r1(Math.max(o.width ?? 0, o.height ?? 0) / DPM),
           }));
-        return textResult({ ...siteAnalysis(boundary, shapes, rotation), trees });
+        // the bad views, so each step can be checked for a screen along them (SC-238)
+        const pins = ((await send("get_pins", {})) as Array<{ id: string; pinType: string; x: number; y: number; label?: string }> ?? [])
+          .map((p) => ({ ...p, x: p.x / DPM, y: p.y / DPM }));
+        return textResult({ ...siteAnalysis(boundary, shapes, rotation, pins), trees });
       }
 
       // Zones: absolute polygon/path → editor form; lock after creating; answer with checks

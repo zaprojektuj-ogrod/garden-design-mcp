@@ -13,8 +13,8 @@ Large garden (`largeGarden`, 400 m² of garden or more): quality and invention b
 - feasibility (each wish's target footprint against the garden: fits / tight / no room) and the style questionnaire (guide › Large garden);
 - your concept in words: the spaces as rooms, each with a use, calmer away from the house, and how they connect; and the steps ahead (spaces, connections, each space), so the user knows the way;
 - the spaces as zones; then the connections (routes of different character, loops); then each space in turn, built out with zone kinds (low and tall planting, hedge or screen, lawn or meadow, surfaces).
-After each step, before you report: `get_site_analysis` › `blank`; fill each patch, or say what it is for (the corridor for the next step's paths). Keep each wish's hard size (the court inside the lawn) through later changes.
-Then check the brief: every wish has its place, every side with a `view_bad` pin has a screen along the bad view; and what you are about to report is on the preview where you say it is. Zones round a tree take its real crown (`get_site_analysis` › `trees`).
+After each step, before you report: `get_site_analysis` › `blank`; fill each patch, or say what it is for (the corridor for the next step's paths). After the paths step no corridor is left: close every patch, slivers too — the user sees each white patch on the plan. Keep each wish's hard size (the court inside the lawn) through later changes.
+Then check the brief: every wish has its place, every side with a `view_bad` pin has a screen along the bad view; and what you are about to report is on the preview where you say it is. `get_site_analysis` › `badViews` gives the places that still see a bad view (`seenFrom`). Zones round a tree take its real crown (`get_site_analysis` › `trees`).
 Zones meet: along a fence a zone reaches the fence's line, and neighbouring zones share their edges — a thin strip between them is a gap. At least two routes run the garden's length, joined into loops; a side path at least 0.6 m wide.
 No catalog products, plants or objects while zoning; "one add_zones per pass" does not apply.
 Then stop — no plants/objects until asked.
