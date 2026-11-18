@@ -9,7 +9,8 @@ export const tools: Tool[] = [
       "Find an address anywhere in the world (OpenStreetMap Nominatim). Returns {address, lat, lon, countryCode}; " +
       "countryCode is ISO 3166-1 alpha-2 in lower case. The land-registry tools (get_parcel_by_*, import_parcel) " +
       "work only for countryCode 'pl'; elsewhere set the garden's place with set_geo_anchor and the plot's boundary " +
-      "with set_boundary.",
+      "with set_boundary. The match is fuzzy: when the result carries `approximate: true` (another place, or the house " +
+      "number not found) it is NOT the address asked for: do not take it for the plot.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -51,16 +52,23 @@ export const tools: Tool[] = [
   {
     name: "get_parcel_by_address",
     description:
-      "Get parcel information by address (geocodes then looks up parcel). Poland only: refused for a garden placed outside Poland.",
+      "Get parcel information by address (geocodes then looks up parcel). Poland only: refused for a garden placed outside Poland. " +
+      "Give the address as `town`, `street` and `number` (street empty in a village) or as one `address` text; the editor tries the " +
+      "spellings the register understands (ul./ulica, '4 B' = '4B', either order). If the register does not know the address it " +
+      "falls back to the map finder and returns the parcel there with `approximate: true`: then confirm with the owner that it " +
+      "is the plot. A failure says how far it got (town, street or house number); then use get_parcel_by_id with the number from " +
+      "the geoportal, or get_parcel_by_coordinates.",
     inputSchema: {
       type: "object" as const,
       properties: {
         address: {
           type: "string",
-          description: "Polish address to find parcel for",
+          description: "Polish address as one text, e.g. 'Kraków, Mokra 4B' (or give town/street/number)",
         },
+        town: { type: "string", description: "Town or village, e.g. 'Kraków'" },
+        street: { type: "string", description: "Street, e.g. 'Mokra' or 'ul. Mokra'; empty in a village" },
+        number: { type: "string", description: "House number, e.g. '4B'" },
       },
-      required: ["address"],
     },
   },
   {

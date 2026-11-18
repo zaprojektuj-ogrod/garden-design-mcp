@@ -103,13 +103,14 @@ Another 17 tools still answer when called but aren't listed, since every listed 
 | `set_boundary` | Give the plot boundary as a polygon in metres (from measurements or traced from the map) |
 | `get_parcel_by_coordinates` | Land registry parcel by WGS84 lat/lon (Poland) |
 | `get_parcel_by_id` | Land registry parcel by parcel ID (Poland) |
-| `get_parcel_by_address` | Address → land registry parcel (Poland) |
+| `get_parcel_by_address` | Address (`town`, `street`, `number`, or one text) → land registry parcel (Poland); several spellings are tried, a plot found only by the map finder is marked `approximate` |
 | `import_parcel` | Import a parcel as the garden boundary, with the cadastral map behind it (Poland) |
 | `import_buildings` | Import the buildings on and around the parcel from the land registry (Poland) |
 | `get_site_analysis` | House facades by compass side, party walls and the garden depth on each side; the site's main directions for zone edges (`axes`), whether the garden is large (`largeGarden`, 400 m² or more), the garden no zone covers yet (`blank`), and the trees with their trunk and crown |
 | `upload_reference_photo` | Upload a reference photo (kept for the session) |
 | `get_reference_photos` | Get the uploaded reference photos |
-| `zoom_image` | A close-up of an image attached in the editor's chat, for reading details |
+| `attach_image` | Hand the editor a picture from a file on the designer's computer (a survey map, a site plan, a drawing): kept as an attached image for `zoom_image` and `set_survey_map` — pictures pasted into the MCP client's chat never reach the editor |
+| `zoom_image` | A close-up of an image attached in the editor's chat or handed over with `attach_image`, for reading details |
 | `set_survey_map` | Lay a survey map or site plan to scale under the garden, from two matched points or two points and a distance |
 | `map_to_garden` | Turn points on the laid survey map into garden coordinates in metres |
 

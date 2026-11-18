@@ -22,7 +22,9 @@ import {
   fromAbsolutePolygon,
   pathPolygon,
   inside,
+  treesOnHardGround,
   type Pt,
+  type Trunk,
 } from "./geometry.js";
 import { replyText } from "./slim.js";
 import { planPlanting, hedgeRuns, bedDepth, type Canopy, type PlantChoice } from "./planting.js";
@@ -244,9 +246,22 @@ export function createDispatcher(send: Send, designGuide: string) {
     };
   }
 
+  /** The trees on the plan by their trunks (metres): plants the size of a tree, tree shapes; `ids` limits them */
+  async function treeTrunks(ids?: Set<string>): Promise<Trunk[]> {
+    const raw = await send("get_objects", {});
+    const list = (Array.isArray(raw) ? raw : (raw as { objects?: unknown[] })?.objects ?? []) as Array<PlacedObject & { label?: string }>;
+    return list
+      .filter((o) => !ids || ids.has(o.id))
+      .filter((o) => (o.type === "shape" && o.shape?.shapeId?.startsWith("tree"))
+        || (o.type === "plant" && Math.max(o.width ?? 0, o.height ?? 0) / DPM >= 3))
+      .map((o) => ({ id: o.id, label: o.label ?? null, x: o.x / DPM, y: o.y / DPM }));
+  }
+
   async function zoneChecks(ids: string[]) {
     const { boundary, shapes } = await siteState();
-    return checkZones(shapes.filter((s) => ids.includes(s.id)), shapes, boundary);
+    let trunks: Trunk[] = [];
+    try { trunks = await treeTrunks(); } catch { trunks = []; }
+    return checkZones(shapes.filter((s) => ids.includes(s.id)), shapes, boundary, trunks);
   }
 
   async function callTool(name: string, args: Record<string, unknown> | undefined): Promise<ToolResult> {
@@ -598,6 +613,24 @@ export function createDispatcher(send: Send, designGuide: string) {
             { type: "image", mimeType: match[1], data: match[2] },
           ],
         };
+      }
+
+      // A tree placed or moved with its trunk in paving, a path or a terrace: say so, the trunk may be misplaced
+      if (OBJECT_WRITE_TOOLS.has(name) && result && typeof result === "object") {
+        try {
+          const r = result as { results?: Array<{ id?: string }>; id?: string; ids?: string[] };
+          const a = (args ?? {}) as { id?: string; ids?: string[]; objects?: Array<{ id?: string }>; updates?: Array<{ id?: string }> };
+          const ids = new Set([
+            ...(r.results ?? []).map((x) => x.id), r.id, ...(r.ids ?? []), a.id, ...(a.ids ?? []),
+            ...(a.objects ?? []).map((o) => o.id), ...(a.updates ?? []).map((o) => o.id),
+          ].filter((x): x is string => typeof x === "string"));
+          const trunks = ids.size ? await treeTrunks(ids) : [];
+          if (trunks.length) {
+            const { shapes } = await siteState();
+            const trunkWarnings = treesOnHardGround(shapes, trunks);
+            if (trunkWarnings.length) result = { ...(result as object), trunkWarnings };
+          }
+        } catch { /* the check is a hint, never a failure */ }
       }
 
       return textResult(result, name, args ?? {});

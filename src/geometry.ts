@@ -453,9 +453,37 @@ export function siteAnalysis(boundary: Pt[], zones: Shape[], rotation: number, p
 // ── Zone checks ──
 
 /** Facts and warnings for each new or changed zone against the parcel and existing zones */
-export function checkZones(targets: Shape[], all: Shape[], boundary: Pt[] | null) {
+/** Ground a tree's trunk can't stand in: paving, a path, a terrace, parking, an entry */
+const HARD_GROUND = new Set(["path", "terrace", "parking", "entry"]);
+
+/** A tree on the plan by its trunk: a plant the size of a tree, or a tree shape */
+export interface Trunk { id: string; label: string | null; x: number; y: number }
+
+/**
+ * The trees whose trunk a hard zone covers. One of the two is likely misplaced: an aerial photo shows a tree's crown,
+ * not its trunk, and a crown by a fence or a drive can hang over it — ask before paving over a trunk
+ */
+export function trunksUnder(zones: Shape[], trunks: Trunk[]) {
+  const out: Array<{ zone: string; zoneType: string; tree: string; label: string | null; at: Pt }> = [];
+  for (const z of zones) {
+    if (!HARD_GROUND.has(z.zoneType)) continue;
+    for (const t of trunks) if (inside(t, z.poly)) out.push({ zone: z.id, zoneType: z.zoneType, tree: t.id, label: t.label, at: rp(t) });
+  }
+  return out;
+}
+
+const trunkWarning = (u: ReturnType<typeof trunksUnder>[number]) =>
+  `covers the trunk of tree ${u.tree}${u.label ? ` ("${u.label}")` : ""} at (${u.at.x}, ${u.at.y}): ask whether the trunk really stands there or only the crown hangs over (an aerial photo shows the crown), then move the zone's edge off the trunk or the tree to its trunk`;
+
+/** A tree placed or moved with its trunk in a hard zone: the warning the object call answers with */
+export function treesOnHardGround(zones: Shape[], trunks: Trunk[]): string[] {
+  return trunksUnder(zones, trunks).map((u) =>
+    `tree ${u.tree}${u.label ? ` ("${u.label}")` : ""} stands with its trunk in ${u.zoneType} ${u.zone} at (${u.at.x}, ${u.at.y}): ask whether the trunk really stands there or only the crown hangs over (an aerial photo shows the crown)`);
+}
+
+export function checkZones(targets: Shape[], all: Shape[], boundary: Pt[] | null, trunks: Trunk[] = []) {
   return targets.map((t) => {
-    const warnings: string[] = [];
+    const warnings: string[] = trunksUnder([t], trunks).map(trunkWarning);
     const a = area(t.poly);
     if (boundary) {
       const out = outsideArea(t.poly, boundary);
