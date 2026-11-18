@@ -20,6 +20,7 @@ import { RESOURCES, readResource } from "./resources.js";
 import { PROMPTS, getPromptMessages } from "./prompts.js";
 import { createDispatcher, DESIGN_GUIDE_TOOL } from "./dispatch.js";
 import { loadCards, designCards, DESIGN_CARDS_TOOL } from "./cards.js";
+import { readImageFile, ATTACH_IMAGE_TOOL } from "./attachFile.js";
 
 // Source of truth: package.json. Resolves to ../package.json from dist/server.js
 // at runtime (and the same from src/server.ts under tsx, since import.meta.url
@@ -75,7 +76,7 @@ export function createServer(): Server {
   // ── Tools ──
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
-    return { tools: [...ALL_TOOLS, DESIGN_GUIDE_TOOL, ...(CARDS ? [DESIGN_CARDS_TOOL] : [])] };
+    return { tools: [...ALL_TOOLS, DESIGN_GUIDE_TOOL, ATTACH_IMAGE_TOOL, ...(CARDS ? [DESIGN_CARDS_TOOL] : [])] };
   });
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
@@ -128,6 +129,22 @@ export function createServer(): Server {
               type: "text",
               text: JSON.stringify({ mcpServer, editor }, null, 2),
             },
+          ],
+        };
+      }
+
+      // A drawing from a file on the designer's computer, kept by the editor as an attached picture (M30)
+      if (name === "attach_image") {
+        const a = (args ?? {}) as { path?: string; label?: string };
+        const file = await readImageFile(String(a.path ?? ""));
+        const result = (await sendToBrowser("attach_image", { dataUri: file.dataUri, name: a.label || file.name })) as { dataUri?: string } | null;
+        const { dataUri = "", ...about } = result ?? {};
+        const match = dataUri.match(/^data:(image\/[a-z]+);base64,(.+)$/);
+        if (!match) return { content: [{ type: "text", text: "Error: the editor kept no copy of the picture" }], isError: true };
+        return {
+          content: [
+            { type: "text", text: JSON.stringify({ ...about, file: file.name, bytes: file.bytes }) },
+            { type: "image", mimeType: match[1], data: match[2] },
           ],
         };
       }

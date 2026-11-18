@@ -106,7 +106,13 @@ export const tools: Tool[] = [
       "Measured site facts for placing pins and zones, computed from the parcel boundary and building zones (call after import_parcel + import_buildings). Returns (metres, garden coordinates): the parcel area and its edges by compass side; the user's house (largest building centred in the parcel) with each facade's compass side, length, from/to endpoints, midpoint, outward normal, whether it is a shared (party) wall, and `gardenDepth` — the free distance from the facade straight out to the boundary; neighbouring buildings with direction and whether attached; total garden area and whether it is a large garden (`largeGarden`, 400 m² or more: zoned in steps); the site's main directions (`axes`, degrees from east: the house walls and the boundary), which zone edges follow. Use it to put door pins ON the right facade and to check whether a terrace or bed fits on a side before drawing zones.",
     inputSchema: {
       type: "object" as const,
-      properties: {},
+      properties: {
+        viewHeights: {
+          type: "object",
+          additionalProperties: { type: "number" },
+          description: "How tall what each bad view shows is, m, by view_bad pin id (default 2: a neighbour's garden and ground floor; about 5 for upper-floor windows): a planted screen is checked against the line of sight to it.",
+        },
+      },
       required: [],
     },
   },

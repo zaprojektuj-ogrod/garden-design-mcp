@@ -25,11 +25,18 @@ import {
   type Pt,
 } from "./geometry.js";
 import { replyText } from "./slim.js";
-import { planPlanting, hedgeRuns, type Canopy, type PlantChoice } from "./planting.js";
+import { planPlanting, hedgeRuns, bedDepth, type Canopy, type PlantChoice } from "./planting.js";
 import { layeredCover, layerOf, boundsOf } from "./coverage.js";
 
 /** Zones whose ground takes no plants: plant_zones keeps plant centres out of them */
 const NO_PLANTING = new Set(["terrace", "path", "building", "entry", "parking", "lawn"]);
+
+/** How high a zone stands, for the side a bed is seen from: its front faces lower ground — paths, lawns,
+ *  terraces, places to sit or play, lower planting; buildings and fences are never a front */
+const STANDS: Record<string, number> = {
+  terrace: 0, path: 0, lawn: 0, entry: 0, parking: 0, relaxation: 0, activity: 0, utility: 0,
+  herbs: 1, low_plants: 1, wild: 1, tall_plants: 2, privacy_screen: 3,
+};
 
 interface PlantZoneSpec {
   zoneId: string;
@@ -86,7 +93,8 @@ function canopiesOf(o: PlacedObject, sized: PlantingSizes | null): Planted[] {
     return [{ id: o.id, x, y, footprint: Math.max(w, d), heightM: o.productId ? sized?.heights?.[String(o.productId)] : undefined }];
   }
   if (o.type !== "shape" || !o.shape) return [];
-  const kind = sized?.kinds?.[o.shape.shapeId];
+  // without the editor's kinds, a shape much longer than deep is a hedge or a climber along its line
+  const kind = sized?.kinds?.[o.shape.shapeId] ?? (w >= 2.5 * d ? "hedge" : undefined);
   if (kind === "hedge" || kind === "climber") {
     const a = ((o.rotation ?? 0) * Math.PI) / 180;
     const ux = Math.cos(a) * w / 2, uy = Math.sin(a) * w / 2;
@@ -112,9 +120,24 @@ export type ToolResult = {
 export const DESIGN_GUIDE_TOOL = {
   name: "get_design_guide",
   description:
-    "The full design guide: step-by-step first-session workflow, how to read photos and floor plans onto facades, pin rules, the three zone passes with minimum sizes, the journal template, plant selection and verification. Call once at the start of a session.",
-  inputSchema: { type: "object" as const, properties: {} },
+    "The design guide: step-by-step first-session workflow, how to read photos and floor plans onto facades, pin rules, the three zone passes with minimum sizes, the journal template and verification. Call once at the start of a session. Detailing — Step 3: surfaces, objects, the planting as shapes, the species — comes apart: call with `part: \"detailing\"` before you detail.",
+  inputSchema: {
+    type: "object" as const,
+    properties: { part: { type: "string", enum: ["detailing"], description: "\"detailing\": Step 3 and choosing species" } },
+  },
 };
+
+/** The guide's sections for detailing, served apart: the whole guide passes what an MCP client takes in one
+ *  tool result (Claude Code keeps about 50 KB and shows the agent only a preview of more) */
+const DETAILING = ["Step 3 — Detailing, in three passes (stop after each pass)", "Botanical Decision-Making"];
+
+/** The guide without its detailing sections, or (`part: "detailing"`) those sections alone */
+export function guidePart(guide: string, part?: string): string {
+  const sections = guide.split(/^(?=#{1,3} )/m);
+  const detailing = (s: string) => /^#{1,3} /.test(s) && DETAILING.includes(s.split("\n")[0].replace(/^#+ /, "").trim());
+  if (part === "detailing") return "Design guide — detailing\n\n" + sections.filter(detailing).join("");
+  return sections.filter((s) => !detailing(s)).join("");
+}
 
 // M29: Per-tool WebSocket-bridge timeout overrides (ms). The default is 30 s in
 // `bridge.ts`; tools that wrap genuinely slow remote services need more.
@@ -243,7 +266,7 @@ export function createDispatcher(send: Send, designGuide: string) {
       }
 
       if (name === "get_design_guide") {
-        return { content: [{ type: "text" as const, text: designGuide }] };
+        return { content: [{ type: "text" as const, text: guidePart(designGuide, args?.part as string | undefined) }] };
       }
 
       if (name === "get_site_analysis") {
@@ -254,7 +277,7 @@ export function createDispatcher(send: Send, designGuide: string) {
         // The trees standing on the plot, so zones round a tree take its real crown (SC-234)
         const rawObjects = await send("get_objects", {});
         const objectList = (Array.isArray(rawObjects) ? rawObjects : (rawObjects as { objects?: unknown[] })?.objects ?? []) as
-          Array<{ id: string; type: string; x: number; y: number; width?: number; height?: number; label?: string; productName?: string }>;
+          Array<PlacedObject & { label?: string; productName?: string }>;
         const r1 = (v: number) => Math.round(v * 10) / 10;
         const trees = objectList
           .filter((o) => o.type === "plant" && Math.max(o.width ?? 0, o.height ?? 0) / DPM >= 4)
@@ -265,7 +288,10 @@ export function createDispatcher(send: Send, designGuide: string) {
         // the bad views, so each step can be checked for a screen along them (SC-238)
         const pins = ((await send("get_pins", {})) as Array<{ id: string; pinType: string; x: number; y: number; label?: string }> ?? [])
           .map((p) => ({ ...p, x: p.x / DPM, y: p.y / DPM }));
-        return textResult({ ...siteAnalysis(boundary, shapes, rotation, pins), trees });
+        // the plant shapes, so a planted screen is judged by how tall it is where it stands
+        const crowns = objectList.filter((o) => o.type === "shape").flatMap((o) => canopiesOf(o, null));
+        const viewHeights = (args?.viewHeights ?? {}) as Record<string, number>;
+        return textResult({ ...siteAnalysis(boundary, shapes, rotation, pins, crowns, viewHeights), trees });
       }
 
       // Zones: absolute polygon/path → editor form; lock after creating; answer with checks
@@ -375,6 +401,8 @@ export function createDispatcher(send: Send, designGuide: string) {
               choices.push({
                 productId: `shape:${p.shape}#${i}`, footprint: Math.max(size.widthM, size.depthM), share: p.share, count: p.count,
                 heightM: size.heightM, form: p.shape, size, label: p.label, notes: p.notes,
+                // a drift of perennials or grasses, a mat of ground cover: one shape a drift, uneven drift to drift
+                drift: size.kind === "clump" || size.kind === "groundcover",
               });
             } else {
               const id = String(p.productId);
@@ -400,6 +428,16 @@ export function createDispatcher(send: Send, designGuide: string) {
           const avoid = shapes
             .filter((s) => s.id !== zone.id && NO_PLANTING.has(s.zoneType) && !zone.poly.every((p) => inside(p, s.poly)))
             .map((s) => s.poly);
+          // The bed is composed toward the side it is seen from: each kind's depth by its height among the bed's
+          // heights, the plants already there counted — the tallest at the back, the lowest at the front
+          const stands = STANDS[zone.zoneType] ?? 1;
+          const depthAt = bedDepth(zone.poly, shapes.filter((s) => s.id !== zone.id && (STANDS[s.zoneType] ?? 9) < stands).map((s) => s.poly));
+          const tenth = (h: number) => Math.round(h * 10) / 10;
+          const heights = [...new Set([...choices.map((c) => c.heightM), ...plantsNow.filter((c) => inside(c, zone.poly)).map((c) => c.heightM)]
+            .filter((h): h is number => h !== undefined).map(tenth))].sort((a, b) => a - b);
+          if (depthAt && heights.length >= 2) {
+            for (const c of choices) if (c.heightM !== undefined) c.depth = heights.indexOf(tenth(c.heightM)) / (heights.length - 1);
+          }
 
           // A hedge shape: one line along each straight run of the zone, as wide as the zone (within its range)
           const hedgeLines: Array<{ form: string; lines: number; lengthM: number }> = [];
@@ -437,19 +475,23 @@ export function createDispatcher(send: Send, designGuide: string) {
             const group = byLayer.get(key);
             if (!group) continue;
             const existing = plantsNow.filter((c) => key === "any" || c.heightM === undefined || layerOf(c.heightM) === key);
-            const plan = planPlanting(zone.poly, group, { layout: spec.layout, coverage: spec.coverage, existing, avoid });
+            const plan = planPlanting(zone.poly, group, { layout: spec.layout, coverage: spec.coverage, existing, avoid, depthAt });
             layout ??= plan.layout;
             Object.assign(short, plan.short);
             for (const p of plan.placed) {
               const c = group.find((g) => g.productId === p.productId)!;
               placedCount.set(c.productId, (placedCount.get(c.productId) ?? 0) + 1);
+              const r2 = (v: number) => Math.round(v * 100) / 100;
               objects.push(c.form && c.size
                 ? {
-                  type: "shape", shape: c.form, x: p.x, y: p.y, width: c.size.widthM, height: c.size.depthM, tall: c.size.heightM,
+                  type: "shape", shape: c.form, x: p.x, y: p.y, tall: c.size.heightM,
+                  ...(p.oval
+                    ? { width: r2(p.oval.w), height: r2(p.oval.d), rotation: Math.round(p.oval.rotation) }
+                    : { width: c.size.widthM, height: c.size.depthM }),
                   zoneId: zone.id, ...(c.label ? { label: c.label } : {}), ...(c.notes ? { notes: c.notes } : {}),
                 }
                 : { type: "plant", productId: c.productId, x: p.x, y: p.y, zoneId: zone.id, ...(c.label ? { label: c.label } : {}) });
-              plantsNow.push({ id: "", x: p.x, y: p.y, footprint: c.footprint, heightM: c.heightM });
+              plantsNow.push({ id: "", x: p.x, y: p.y, footprint: p.oval ? Math.sqrt(p.oval.w * p.oval.d) : c.footprint, heightM: c.heightM });
             }
           }
           const cover = layeredCover(boundsOf(zone.poly), (q) => inside(q, zone.poly),

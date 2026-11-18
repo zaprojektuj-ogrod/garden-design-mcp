@@ -4,6 +4,10 @@
 
 # Talking with the owner over MCP
 
+The guide comes in two parts: before detailing (Step 3), call `get_design_guide({ part: "detailing" })` for Step 3 and choosing species.
+
+A drawing, site plan or survey map the owner sends in this chat never reaches the editor, so the map tools can't use it: ask where the file is on their computer (or take the path they give) and `attach_image({ path })` it — it comes back as view "N" for `zoom_image` and `set_survey_map`, to lay the drawing under the garden and read the boundary and the house off it to scale.
+
 You are connected to the owner's open garden editor: they talk to you in their AI app's chat
 window, with the editor open beside it, and see every change on the plan as you make it. The
 editor's built-in assistant talks to them by the rules below, and the owner expects the same

@@ -1,6 +1,8 @@
 // Design knowledge cards: a graph the agent reads by its parts. Hubs gather cards (`contains`); cards lead to others
 // (`uses`), and some are rivals (`alternative_to`, `conflicts_with`): once a style or approach is picked, its part of
-// the graph is the knowledge applied and its rivals drop out. Node only (reads a folder): served by server.ts, never
+// the graph is the knowledge applied and its rivals drop out. Each card also belongs to steps of the design (`stage`:
+// zones, surfaces, structure, beds): a pick for one step gives that step's cards from the picked part, so what was
+// picked while zoning leads on to the planting it implies. Node only (reads a folder): served by server.ts, never
 // bundled into the in-app agent.
 
 import { readFileSync, readdirSync, existsSync } from "node:fs";
@@ -80,22 +82,25 @@ function rivals(cards: Map<string, Card>): Map<string, Set<string>> {
 
 const line = (c: Card) => `${c.id} (${c.type}) — ${c.useWhen}`;
 
-/** Where to start: the hubs, and the choices the graph holds (each pair of rival cards once) */
+/** Where to start: the hubs, the steps with how many cards each has, and the choices the graph holds (each pair of rival cards once) */
 export function cardMap(cards: Map<string, Card>) {
   const hubs = [...cards.values()].filter((c) => c.type === "hub")
     .map((c) => ({ id: c.id, stage: c.stage, set: c.set || null, cards: (c.links.contains ?? []).length, useWhen: c.useWhen }));
+  const stages: Record<string, number> = {};
+  for (const c of cards.values()) for (const s of c.stage) stages[s] = (stages[s] ?? 0) + 1;
   const choices: string[] = [];
   for (const [a, rs] of [...rivals(cards)].sort(([x], [y]) => x.localeCompare(y)))
     for (const b of [...rs].sort()) if (a < b) choices.push(`${a} | ${b}`);
-  return { hubs, choices };
+  return { hubs, stages, choices };
 }
 
 /**
  * The part of the graph the picks lead to: the picked cards, then every card reached from them by `contains` and
  * `uses`, never through or into a rival of a picked card. Returned as an index, one line a card; a card with rivals
- * still in the part names them — a choice left to make
+ * still in the part names them — a choice left to make. With a `stage`, the walk is the same (a zoning card still
+ * leads on), but the index keeps only that step's cards
  */
-export function pickedPart(cards: Map<string, Card>, picks: string[]) {
+export function pickedPart(cards: Map<string, Card>, picks: string[], stage?: string) {
   const unknown = picks.filter((id) => !cards.has(id));
   const r = rivals(cards);
   const out = new Set<string>();
@@ -110,11 +115,12 @@ export function pickedPart(cards: Map<string, Card>, picks: string[]) {
     todo.push(...[...(c.links.contains ?? []), ...(c.links.uses ?? [])].reverse());
   }
   const inPart = new Set(part);
-  const index = part.map((id) => {
+  const shown = stage ? part.filter((id) => cards.get(id)!.stage.includes(stage)) : part;
+  const index = shown.map((id) => {
     const open = [...(r.get(id) ?? [])].filter((x) => inPart.has(x));
     return line(cards.get(id)!) + (open.length ? ` [or: ${open.join(", ")}]` : "");
   });
-  return { picked: picks.filter((id) => cards.has(id)), dropped: [...out].sort(), cards: index.length, index, ...(unknown.length ? { unknown } : {}) };
+  return { picked: picks.filter((id) => cards.has(id)), ...(stage ? { stage } : {}), dropped: [...out].sort(), cards: index.length, index, ...(unknown.length ? { unknown } : {}) };
 }
 
 /** Whole cards by id */
@@ -125,9 +131,9 @@ export function fullCards(cards: Map<string, Card>, ids: string[]) {
   }).join("\n\n---\n\n");
 }
 
-/** `n` cards drawn at random from the picked part, leaving out the picks and those named in `exclude` */
-export function drawCards(cards: Map<string, Card>, picks: string[], n: number, exclude: string[] = [], random = Math.random) {
-  const pool = pickedPart(cards, picks).index.map((l) => l.split(" ")[0])
+/** `n` cards drawn at random from the picked part (of one step, with `stage`), leaving out the picks and those named in `exclude` */
+export function drawCards(cards: Map<string, Card>, picks: string[], n: number, exclude: string[] = [], random = Math.random, stage?: string) {
+  const pool = pickedPart(cards, picks, stage).index.map((l) => l.split(" ")[0])
     .filter((id) => !picks.includes(id) && !exclude.includes(id) && cards.get(id)?.type !== "hub");
   const drawn: string[] = [];
   while (drawn.length < n && pool.length) drawn.push(pool.splice(Math.floor(random() * pool.length), 1)[0]);
@@ -141,6 +147,8 @@ export const DESIGN_CARDS_TOOL = {
     "Some cards are rivals — two styles, two ways of solving one thing — so you never apply them all: pick, and the picked part of the graph is the knowledge you apply. " +
     "Call with no arguments for the map (the hubs, and the choices the graph holds). After the style questions, `pick` the hub for the step and the cards that match the user's answers: " +
     "you get that part of the graph as an index (one line a card; `[or: …]` marks a choice still open), and the rivals of your picks are dropped. " +
+      "Cards also belong to steps of the design, `stage`: zones (the concept, spaces, paths, zone kinds), surfaces (surfaces and objects), structure (trees, hedges, screens, larger shrubs), beds (filling the beds). " +
+      "Pass the step you are on with your pick to get only its cards: the style and geometry picked while zoning lead on to the planting they imply, so at a planting step pick again what the journal says was picked. " +
     "Read the cards you need in full with `ids`. `draw` gives that many cards at random from the picked part, for ideas you would not have looked for (pass the same `pick`; `exclude` what you have read). " +
     "Write your picks in the journal, so a later session picks the same. When a card shapes a zone, put its id in that zone's notes.",
   inputSchema: {
@@ -148,6 +156,7 @@ export const DESIGN_CARDS_TOOL = {
     properties: {
       pick: { type: "array", items: { type: "string" }, description: "Hub and card ids: the part of the graph to apply" },
       ids: { type: "array", items: { type: "string" }, description: "Cards to read in full" },
+      stage: { type: "string", description: "The step you are on (zones, surfaces, structure, beds): only that step's cards of the picked part (with `pick`)" },
       draw: { type: "number", description: "Cards to draw at random from the picked part (with `pick`)" },
       exclude: { type: "array", items: { type: "string" }, description: "Cards left out of the draw (those already read)" },
     },
@@ -155,10 +164,11 @@ export const DESIGN_CARDS_TOOL = {
 };
 
 /** The tool's answer for one call */
-export function designCards(cards: Map<string, Card>, args: { pick?: string[]; ids?: string[]; draw?: number; exclude?: string[] }) {
+export function designCards(cards: Map<string, Card>, args: { pick?: string[]; ids?: string[]; draw?: number; exclude?: string[]; stage?: string }) {
   const pick = args.pick ?? [];
+  const stage = args.stage?.trim() || undefined;
   if (args.ids?.length) return fullCards(cards, args.ids);
-  if (args.draw && pick.length) return fullCards(cards, drawCards(cards, pick, Math.min(5, Math.max(1, Math.round(args.draw))), args.exclude));
-  if (pick.length) return JSON.stringify(pickedPart(cards, pick));
+  if (args.draw && pick.length) return fullCards(cards, drawCards(cards, pick, Math.min(5, Math.max(1, Math.round(args.draw))), args.exclude, Math.random, stage));
+  if (pick.length) return JSON.stringify(pickedPart(cards, pick, stage));
   return JSON.stringify(cardMap(cards));
 }

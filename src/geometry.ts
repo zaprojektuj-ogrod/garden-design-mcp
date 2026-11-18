@@ -267,60 +267,111 @@ type ViewPin = { id: string; pinType: string; x: number; y: number; label?: stri
 /** Where people stay in a garden: what a bad view is screened from */
 const PLACE_KINDS = new Set(["terrace", "relaxation", "activity", "lawn"]);
 
+/** A crown on the plan (a plant shape), metres; a hedge comes as circles along its line */
+export interface Crown { x: number; y: number; footprint: number; heightM?: number }
+
+/** Eye level at the place a bad view is seen from, and the top of what a bad view shows unless told: a neighbour's
+ *  garden and ground floor (upper-floor windows are about 5 m) */
+export const EYE_M = 1.6;
+export const VIEW_TOP_M = 2;
+/** The slants a bad view is looked at besides straight in, degrees off the plot line's normal */
+const SLANTS = [30, -30, 50, -50, 65, -65];
+
 /**
  * Each bad view (a `view_bad` pin): the plot line `reach` metres either side of it, looked at from inside. A sightline
  * straight in from the plot line that reaches a place people stay (a terrace, a seating or activity area, a lawn)
  * within `depth` metres, crossing no screen on the way — a privacy screen, tall planting, or a building that isn't a
- * fence — is the view still in sight: `seenFrom` gives that place and the stretch of plot line it sees (SC-238)
+ * fence — is the view still in sight: `seenFrom` gives that place and the stretch of plot line it sees (SC-238).
+ * Once plant shapes stand in a screen zone, the zone no longer stands for its screen: the shapes do, where they reach
+ * the line of sight from eye level at the place to the top of the view at the plot line (`viewHeights` by pin id,
+ * else VIEW_TOP_M); a seen stretch then says the height needed where the screen stands (`needM`) and the tallest
+ * planting on its line (`hasM`)
  */
-export function badViews(boundary: Pt[], zones: Shape[], pins: ViewPin[], reach = 8, depth = 15) {
+export function badViews(boundary: Pt[], zones: Shape[], pins: ViewPin[], reach = 8, depth = 15,
+  crowns: Crown[] = [], viewHeights: Record<string, number> = {}) {
   const screens = zones.filter((z) =>
     z.zoneType === "privacy_screen" || z.zoneType === "tall_plants" ||
     (z.zoneType === "building" && !isFence(z) && inside(centroid(z.poly), boundary)));
+  const shaped = crowns.filter((c) => c.heightM !== undefined);
+  // a screen zone with shapes in it is judged by them; an empty one (while zoning) stands for its screen
+  const planted = new Set(screens.filter((z) => z.zoneType !== "building" && shaped.some((c) => inside(c, z.poly))).map((z) => z.id));
+  const heightAt = (p: Pt) => shaped.reduce((h, c) =>
+    Math.hypot(c.x - p.x, c.y - p.y) <= c.footprint / 2 ? Math.max(h, c.heightM!) : h, 0);
   const places = zones.filter((z) => PLACE_KINDS.has(z.zoneType));
   const edges = boundary.map((a, i) => ({ a, b: boundary[(i + 1) % boundary.length] }));
   const lens = edges.map(({ a, b }) => Math.hypot(b.x - a.x, b.y - a.y));
   const total = lens.reduce((t, l) => t + l, 0);
   // the point `s` metres along the plot line, with the unit normal pointing into the plot
-  const along = (s: number): { q: Pt; n: Pt } => {
+  const along = (s: number): { q: Pt; n: Pt; i: number } => {
     s = ((s % total) + total) % total;
     let i = 0;
     while (i < edges.length - 1 && s > lens[i]) s -= lens[i++];
     const { a, b } = edges[i], l = lens[i] || 1, t = Math.min(1, s / l);
     const q = { x: a.x + t * (b.x - a.x), y: a.y + t * (b.y - a.y) };
     const n = { x: -(b.y - a.y) / l, y: (b.x - a.x) / l };
-    return inside({ x: q.x + 0.1 * n.x, y: q.y + 0.1 * n.y }, boundary) ? { q, n } : { q, n: { x: -n.x, y: -n.y } };
+    return inside({ x: q.x + 0.1 * n.x, y: q.y + 0.1 * n.y }, boundary) ? { q, n, i } : { q, n: { x: -n.x, y: -n.y }, i };
   };
   return pins.filter((p) => p.pinType === "view_bad").map((pin) => {
     // where the pin meets the plot line, as metres along it
-    let best = { d: Infinity, s: 0 }, run = 0;
+    let best = { d: Infinity, s: 0, i: 0 }, run = 0;
     edges.forEach(({ a, b }, i) => {
       const ex = b.x - a.x, ey = b.y - a.y, l2 = ex * ex + ey * ey;
       const t = l2 ? Math.max(0, Math.min(1, ((pin.x - a.x) * ex + (pin.y - a.y) * ey) / l2)) : 0;
       const d = Math.hypot(pin.x - a.x - t * ex, pin.y - a.y - t * ey);
-      if (d < best.d) best = { d, s: run + t * lens[i] };
+      if (d < best.d) best = { d, s: run + t * lens[i], i };
       run += lens[i];
     });
-    const seen: Array<{ zone: string; label: string | null; from: Pt; to: Pt }> = [];
+    const top = viewHeights[pin.id] ?? VIEW_TOP_M;
+    const seen: Array<{ zone: string; label: string | null; from: Pt; to: Pt; needM?: number; hasM?: number }> = [];
     let current: (typeof seen)[number] | null = null;
-    for (let k = -reach * 2; k <= reach * 2; k++) {   // a sightline every 0.5 m
-      const { q, n } = along(best.s + k / 2);
-      let place: Shape | null = null;
-      for (let t = 0.25; t <= depth; t += 0.25) {
+    // One sightline in from the plot line at `q` along `n`: the place it reaches unscreened, if any
+    const look = (q: Pt, n: Pt, reachIn: number) => {
+      let place: Shape | null = null, at = 0;
+      const line: Array<{ t: number; h: number; screen: boolean }> = [];   // the planting on the way
+      for (let t = 0.25; t <= reachIn; t += 0.25) {
         const p = { x: q.x + t * n.x, y: q.y + t * n.y };
-        if (!inside(p, boundary) || screens.some((z) => inside(p, z.poly))) break;
+        if (!inside(p, boundary)) break;
+        const screen = screens.find((z) => inside(p, z.poly));
+        if (screen && !planted.has(screen.id)) break;
+        const h = heightAt(p);
+        if (h > 0 || screen) line.push({ t, h, screen: !!screen });
         place = places.find((z) => inside(p, z.poly)) ?? null;
-        if (place) break;
+        if (place) { at = t; break; }
       }
-      if (place && current?.zone === place.id) current.to = rp(q);
-      else if (place) seen.push(current = { zone: place.id, label: place.label ?? null, from: rp(q), to: rp(q) });
-      else current = null;
+      // the line of sight from the eye, a metre into the place, to the top of the view at the plot line
+      const need = (t: number) => top + ((EYE_M - top) * t) / (at + 1);
+      if (place && line.some((s) => s.h >= need(s.t))) place = null;
+      return { place, line, need };
+    };
+    for (let k = -reach * 2; k <= reach * 2; k++) {   // a sightline every 0.5 m
+      const { q, n: normal, i: edge } = along(best.s + k / 2);
+      // straight in, then slanting either way along the pin's own side: a place further along the fence sees
+      // the view at an angle
+      let sight = look(q, normal, depth);
+      for (const deg of edge === best.i ? SLANTS : []) {
+        if (sight.place) break;
+        const c = Math.cos((deg * Math.PI) / 180), s = Math.sin((deg * Math.PI) / 180);
+        sight = look(q, { x: normal.x * c - normal.y * s, y: normal.x * s + normal.y * c }, depth / c);
+      }
+      const { place, line, need } = sight;
+      if (!place) { current = null; continue; }
+      const where = line.find((s) => s.screen) ?? line.reduce<(typeof line)[number] | null>((a, s) => (!a || s.h > a.h ? s : a), null);
+      const needM = where ? Math.round(need(where.t) * 10) / 10 : undefined;
+      const hasM = where ? Math.round(Math.max(...line.map((s) => s.h)) * 10) / 10 : undefined;
+      const last = current as (typeof seen)[number] | null;   // (the loop's narrowing loses the stretch carried over)
+      if (last?.zone === place.id) {
+        last.to = rp(q);
+        if (needM !== undefined) { last.needM = Math.max(last.needM ?? 0, needM); last.hasM = Math.min(last.hasM ?? Infinity, hasM!); }
+      } else {
+        seen.push(current = { zone: place.id, label: place.label ?? null, from: rp(q), to: rp(q), ...(needM !== undefined ? { needM, hasM } : {}) });
+      }
     }
     return { id: pin.id, label: pin.label ?? null, seenFrom: seen };
   });
 }
 
-export function siteAnalysis(boundary: Pt[], zones: Shape[], rotation: number, pins: ViewPin[] = []) {
+export function siteAnalysis(boundary: Pt[], zones: Shape[], rotation: number, pins: ViewPin[] = [],
+  crowns: Crown[] = [], viewHeights: Record<string, number> = {}) {
   const buildings = zones.filter((z) => z.zoneType === "building");
   const inParcel = buildings.filter((b) => inside(centroid(b.poly), boundary));
   const house = [...inParcel].sort((a, b) => area(b.poly) - area(a.poly))[0];
@@ -384,7 +435,7 @@ export function siteAnalysis(boundary: Pt[], zones: Shape[], rotation: number, p
     largeGarden: area(boundary) - (area(hp) - outsideArea(hp, boundary)) >= LARGE_GARDEN_M2,
     axes: siteAxes(boundary, hp),
     blank: blankAreas(boundary, zones),
-    ...(pins.some((p) => p.pinType === "view_bad") ? { badViews: badViews(boundary, zones, pins) } : {}),
+    ...(pins.some((p) => p.pinType === "view_bad") ? { badViews: badViews(boundary, zones, pins, 8, 15, crowns, viewHeights) } : {}),
     howToUse: [
       "Doors and windows sit ON a facade line: pick a point between `from` and `to` of the facade on the side the brief or photos indicate (e.g. 30% along: from + 0.3·(to−from)).",
       "`gardenDepth` is the free distance from the facade midpoint straight out to the parcel boundary — compare it with the minimum size of anything you want to place on that side (a terrace for 6 needs ≥3.5 m).",
@@ -394,7 +445,7 @@ export function siteAnalysis(boundary: Pt[], zones: Shape[], rotation: number, p
       `\`largeGarden\` (${LARGE_GARDEN_M2} m² of garden or more): zone it in steps — feasibility and style first, your concept, the spaces, their connections, then each space — with a sign-off after each (the guide's Step 2 › Large garden).`,
       "`trees` are the trees standing on the plot, each with its trunk and crown width: draw zones under and round a tree by its real crown, not by eye.",
       "`blank` is the garden no zone covers yet, its largest patches first down to thin slivers (`from`–`to` is each patch's extent; `between` is what it lies between — zones, a building, the `boundary` — so you know whose edge to move to close it; a patch with `bits` is a thin gap in that many pieces along the same edge, e.g. a zone stopping just short of the fence): call this again after each step and, before you report, fill each patch or say what it is for (e.g. the corridor the next step's path takes). `unlistedM2` is blank left off the list (bits under 1 m², or past the first patches; `morePatches` > 0: call again once the listed ones are closed). After the paths step the corridors are paths: a patch left then is a gap the user sees on the plan, slivers too.",
-      "`badViews` takes each bad view (a `view_bad` pin) with the plot line 8 m either side of it, looked at from inside: `seenFrom` lists each place people stay (a terrace, a seating or activity area, a lawn) that sees part of that stretch with no privacy screen, tall planting or building between — `from`–`to` is the stretch it sees. Before you report a step, screen each, or say why it stays open.",
+      "`badViews` takes each bad view (a `view_bad` pin) with the plot line 8 m either side of it, looked at from inside: `seenFrom` lists each place people stay (a terrace, a seating or activity area, a lawn) that sees part of that stretch with no privacy screen, tall planting or building between — `from`–`to` is the stretch it sees. Before you report a step, screen each, or say why it stays open. Once plant shapes stand in a screen, they are the screen: a line of sight is closed only where they reach it, from eye level (1.6 m) at the place to the top of the view at the plot line (2 m — a neighbour's garden and ground floor — unless you give `viewHeights`, e.g. `{ \"<pin id>\": 5 }` for upper-floor windows); a stretch still seen past planting gives `needM`, the height needed where the screen stands, and `hasM`, the tallest planting on its line — raise the screen there or close its gaps.",
     ],
   };
 }

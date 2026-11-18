@@ -1,6 +1,7 @@
 // Planting a zone (plant_zones): where each plant goes, so the agent picks the plants and the editor
-// does the geometry — nursery-style groups of 3–7 with canopies touching, rows for hedges and screens,
-// clear of paths and paving. Browser-safe (no Node imports); metres throughout.
+// does the geometry — nursery-style groups with canopies touching, rows for hedges and screens, clear of
+// paths and paving. A bed is composed toward the side it is seen from: tall at the back, low at the front,
+// drifts of uneven size set side by side. Browser-safe (no Node imports); metres throughout.
 
 import { area, inside, minWidth, type Pt } from "./geometry.js";
 
@@ -12,6 +13,11 @@ export interface PlantChoice {
   share?: number;
   /** Exact number to plant instead of a share */
   count?: number;
+  /** Where in the bed this kind goes: 0 at the front (the side the bed is seen from) … 1 at the back */
+  depth?: number;
+  /** A drift form (a drift of perennials or grasses, a mat of ground cover): each placement is a whole drift,
+   *  an oval of uneven size round `footprint`, drawn out along the bed */
+  drift?: boolean;
 }
 
 export interface Canopy { x: number; y: number; footprint: number }
@@ -25,10 +31,15 @@ export interface PlantingOptions {
   existing?: Canopy[];
   /** Areas the plant centres must stay out of (paths, terraces, buildings…) */
   avoid?: Pt[][];
+  /** How deep into the bed a point lies, 0 at its front … 1 at its back (bedDepth): each kind keeps to its `depth` */
+  depthAt?: (p: Pt) => number;
 }
 
+/** A drift's oval, metres: `w` along `rotation` (degrees from x toward y), `d` across */
+export interface Oval { w: number; d: number; rotation: number }
+
 export interface PlantingPlan {
-  placed: Array<{ productId: string; x: number; y: number }>;
+  placed: Array<{ productId: string; x: number; y: number; oval?: Oval }>;
   /** Plants that did not fit, by product */
   short: Record<string, number>;
   layout: "groups" | "row";
@@ -128,6 +139,53 @@ function centreLine(poly: Pt[], f: Frame, spacing: number, ok: (p: Pt) => boolea
 
 const canopyArea = (footprint: number) => Math.PI * (footprint / 2) ** 2;
 
+/**
+ * How deep into a bed a point lies, 0 at its front … 1 at its back. The front is the bed's edge along `seenFrom`
+ * (the paths, lawns, terraces and lower planting it is looked at from); a bed with them all round is deepest in
+ * its middle. Undefined when no edge meets them: the bed has no front.
+ */
+export function bedDepth(poly: Pt[], seenFrom: Pt[][]): ((p: Pt) => number) | undefined {
+  const front: Pt[] = [];
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[j], b = poly[i];
+    const n = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / 0.3));
+    for (let k = 0; k < n; k++) {
+      const q = { x: a.x + ((b.x - a.x) * k) / n, y: a.y + ((b.y - a.y) * k) / n };
+      if (seenFrom.some((s) => inside(q, s) || edgeDist(q, s) < 0.4)) front.push(q);
+    }
+  }
+  if (front.length === 0) return undefined;
+  const raw = (p: Pt) => front.reduce((d, q) => Math.min(d, Math.hypot(q.x - p.x, q.y - p.y)), Infinity);
+  // the deepest point of the bed, on a grid
+  const f = frameOf(poly);
+  const step = Math.max(0.25, Math.min(f.range.s1 - f.range.s0, f.range.t1 - f.range.t0) / 20);
+  let deepest = 0;
+  for (let s = f.range.s0; s <= f.range.s1; s += step) {
+    for (let t = f.range.t0; t <= f.range.t1; t += step) {
+      const p = f.toWorld(s, t);
+      if (inside(p, poly)) deepest = Math.max(deepest, raw(p));
+    }
+  }
+  const memo = new WeakMap<Pt, number>();
+  return (p: Pt) => {
+    let d = memo.get(p);
+    if (d === undefined) memo.set(p, (d = deepest > 0 ? Math.min(1, raw(p) / deepest) : 0));
+    return d;
+  };
+}
+
+/** Drift sizes, as a share of a kind's usual group: uneven, a few large and several small */
+const RHYTHM = [1.6, 0.6, 1, 0.4, 1.3, 0.7];
+/** A drift form's drifts, as a share of the size asked: uneven, a few large and several small */
+const DRIFT = [1.5, 0.8, 1.2, 0.6, 1.8, 1];
+const DRIFT_MIN = Math.min(...DRIFT);
+const DRIFT_MEAN = DRIFT.reduce((n, v) => n + v, 0) / DRIFT.length;
+const DRIFT_AREA = DRIFT.reduce((n, v) => n + v * v, 0) / DRIFT.length;
+/** How much longer than wide a drift is, along the bed (its area stays that of its size) */
+const STRETCH = 1.4;
+/** How far a kind may stray from its depth in the bed before it pays for it */
+const DEPTH_SLACK = 0.15;
+
 /** How many of each plant: an exact count, or a share of the canopy the zone still needs */
 function counts(poly: Pt[], plants: PlantChoice[], coverage: number, existing: Canopy[]): number[] {
   const have = existing.filter((c) => inside(c, poly)).reduce((n, c) => n + canopyArea(c.footprint), 0);
@@ -159,15 +217,38 @@ export function planPlanting(poly: Pt[], plants: PlantChoice[], options: Plantin
     !avoid.some((a) => inside(p, a) || edgeDist(p, a) < 0.05) &&
     // (a millimetre's tolerance: spots can sit exactly at the touching distance)
     canopies.every((c) => Math.hypot(c.x - p.x, c.y - p.y) >= touch * (c.footprint + footprint) / 2 - 1e-3);
-  const plant = (productId: string, p: Pt, footprint: number) => {
-    placed.push({ productId, x: p.x, y: p.y });
-    canopies.push({ x: p.x, y: p.y, footprint });
+  // How far a spot is from where its kind belongs in the bed (0 within the slack), when the bed has a front
+  const depthAt = options.depthAt;
+  const offDepth = (q: Pt, p: PlantChoice) =>
+    depthAt && p.depth !== undefined ? Math.max(0, Math.abs(depthAt(q) - p.depth) - DEPTH_SLACK) : 0;
+  // The direction along the bed at a spot, degrees: across the rise of its depth, else the bed's main axis
+  const axis = (Math.atan2(f.u.y, f.u.x) * 180) / Math.PI;
+  const alongBed = (q: Pt, row: boolean) => {
+    if (depthAt && !row) {
+      const e = 0.3;
+      const gx = depthAt({ x: q.x + e, y: q.y }) - depthAt({ x: q.x - e, y: q.y });
+      const gy = depthAt({ x: q.x, y: q.y + e }) - depthAt({ x: q.x, y: q.y - e });
+      if (Math.hypot(gx, gy) > 1e-6) return (Math.atan2(gx, -gy) * 180) / Math.PI;
+    }
+    return axis;
+  };
+  // A plant, or a drift form's whole drift: an oval of its size's area, drawn out along the bed
+  const plant = (p: PlantChoice, q: Pt, footprint: number, row = false) => {
+    let oval = p.drift ? { w: footprint * Math.sqrt(STRETCH), d: footprint / Math.sqrt(STRETCH), rotation: alongBed(q, row) } : undefined;
+    // an oval whose long side would reach out of the bed stays round
+    if (oval) {
+      const a = (oval.rotation * Math.PI) / 180, r = oval.w / 2;
+      const ends = [{ x: q.x + r * Math.cos(a), y: q.y + r * Math.sin(a) }, { x: q.x - r * Math.cos(a), y: q.y - r * Math.sin(a) }];
+      if (ends.some((e) => !inside(e, poly) && edgeDist(e, poly) > 0.15 * footprint)) oval = { w: footprint, d: footprint, rotation: oval.rotation };
+    }
+    placed.push({ productId: p.productId, x: q.x, y: q.y, ...(oval ? { oval } : {}) });
+    canopies.push({ x: q.x, y: q.y, footprint });
   };
   // Candidate spots on a grid finer than the plant, so each plant can sit right against its neighbours
-  const spotsFor = (footprint: number) => {
+  const spotsFor = (footprint: number, asRow = narrow(footprint)) => {
     const step = Math.max(0.05, (TOUCH * footprint) / 2);
     const ok = (q: Pt) => clear(q, footprint);
-    if (narrow(footprint)) return centreLine(poly, f, step, ok);
+    if (asRow) return centreLine(poly, f, step, ok);
     const spots = lattice(poly, f, step, Math.min(0.15 * footprint, width / 2 - 0.01), ok);
     return spots.length ? spots : centreLine(poly, f, step, ok);
   };
@@ -183,50 +264,77 @@ export function planPlanting(poly: Pt[], plants: PlantChoice[], options: Plantin
   });
   const along = (q: Pt) => f.toLocal(q).x;
 
-  // Largest plants first; each kind in drifts of 3–7, the drifts spread through a bed; in a row, one
-  // drift after another from one end
-  const order = plants.map((p, i) => ({ ...p, n: want[i] })).sort((a, b) => b.footprint - a.footprint);
+  // Exact counts first (trees, specimens), then the shares; largest plants first within each. Each kind goes
+  // in drifts: in a row one after another from one end; in a bed, drifts of uneven size, the kinds taking
+  // turns, each new drift set beside what is planted, at its kind's depth in the bed. A drift form's drift is
+  // one oval, its size from the size asked by the DRIFT rhythm
+  const order = plants.map((p, i) => ({ ...p, n: want[i] }))
+    .sort((a, b) => Number(b.count !== undefined) - Number(a.count !== undefined) || b.footprint - a.footprint);
   const mineOf = new Map<string, Pt[]>();
-  for (const p of order) {
-    const spacing = TOUCH * p.footprint;
-    let spots = spotsFor(p.footprint);
-    const groupSize = p.n < 3 ? p.n : Math.min(7, Math.max(3, Math.round(p.n / Math.ceil(p.n / 5))));
+  const kinds = order.map((p, k) => {
     const mine: Pt[] = [];
     mineOf.set(p.productId, mine);
-    let left = p.n;
-    while (left > 0) {
-      spots = spots.filter((q) => clear(q, p.footprint));
-      if (spots.length === 0) break;
-      // A new drift starts where this kind is not yet, and next to what is planted (no stranded gaps)
-      const seed = narrow(p.footprint) ? spots.reduce((a, b) => (along(a) <= along(b) ? a : b)) : spots.reduce((best, q) => {
-        const fromMine = near(q, mine);
-        const fromAll = near(q, canopies);
-        const score = (Number.isFinite(fromMine) ? Math.min(fromMine, 4 * spacing) : 4 * spacing) - (Number.isFinite(fromAll) ? 0.5 * fromAll : 0);
-        return score > best.score ? { q, score } : best;
-      }, { q: spots[0], score: -Infinity }).q;
-      const group: Pt[] = [seed];
-      plant(p.productId, seed, p.footprint);
-      mine.push(seed);
-      left--;
-      while (group.length < groupSize && left > 0) {
-        const cx = group.reduce((n, q) => n + q.x, 0) / group.length;
-        const cy = group.reduce((n, q) => n + q.y, 0) / group.length;
-        let next: Pt | null = null;
-        let best = Infinity;
-        for (const q of spots) {
-          if (near(q, group) > spacing * 1.3 || !clear(q, p.footprint)) continue;
-          const d = Math.hypot(q.x - cx, q.y - cy);
-          if (d < best) { best = d; next = q; }
-        }
-        if (!next) break;
-        group.push(next);
-        plant(p.productId, next, p.footprint);
-        mine.push(next);
-        left--;
-      }
+    const row = narrow(p.footprint);
+    if (p.drift && p.count === undefined) p.n = Math.max(1, Math.round(p.n / (row ? DRIFT_MEAN : DRIFT_AREA)));
+    const groupSize = p.drift ? 1 : p.n < 3 ? p.n : Math.min(7, Math.max(3, Math.round(p.n / Math.ceil(p.n / 5))));
+    const least = p.drift ? DRIFT_MIN * p.footprint : p.footprint;
+    return { p, k, mine, row, least, left: p.n, drifts: 0, groupSize, spots: spotsFor(least, row) };
+  });
+  const driftOf = (kind: (typeof kinds)[number]) => {
+    const { p, mine, row } = kind;
+    kind.spots = kind.spots.filter((q) => clear(q, kind.least));
+    if (kind.spots.length === 0) return false;
+    let spots = kind.spots;
+    // A drift form's drift: the rhythm's next size where it fits, else its smallest
+    let footprint = p.drift ? Math.min(20, p.footprint * DRIFT[(kind.drifts + kind.k) % DRIFT.length]) : p.footprint;
+    if (p.drift) {
+      const fits = spots.filter((q) => clear(q, footprint));
+      if (fits.length) spots = fits; else footprint = kind.least;
     }
-    if (left > 0 && p.count !== undefined) short[p.productId] = left;
+    const spacing = TOUCH * footprint;
+    const size = row || kind.groupSize < 3 ? kind.groupSize
+      : Math.max(1, Math.min(11, Math.round(kind.groupSize * RHYTHM[(kind.drifts + kind.k) % RHYTHM.length])));
+    // A new drift starts beside what is planted (drifts side by side, no stranded gaps), clear of this kind's
+    // last drifts, at its depth in the bed
+    const seed = row ? spots.reduce((a, b) => (along(a) <= along(b) ? a : b)) : spots.reduce((best, q) => {
+      const fromAll = near(q, canopies);
+      const score = (Number.isFinite(fromAll) ? -0.5 * Math.min(fromAll, 4 * spacing) : 0)
+        - (near(q, mine) < 1.5 * spacing ? 2 * spacing : 0)
+        - 6 * spacing * offDepth(q, p);
+      return score > best.score ? { q, score } : best;
+    }, { q: spots[0], score: -Infinity }).q;
+    const group: Pt[] = [seed];
+    plant(p, seed, footprint, row);
+    mine.push(seed);
+    kind.left--;
+    kind.drifts++;
+    // The drift grows round its middle, drawn out along the bed's front where it has one
+    const level = depthAt ? depthAt(seed) : 0;
+    while (group.length < size && kind.left > 0) {
+      const cx = group.reduce((n, q) => n + q.x, 0) / group.length;
+      const cy = group.reduce((n, q) => n + q.y, 0) / group.length;
+      let next: Pt | null = null;
+      let best = Infinity;
+      for (const q of spots) {
+        if (near(q, group) > spacing * 1.3 || !clear(q, p.footprint)) continue;
+        const d = Math.hypot(q.x - cx, q.y - cy) + (depthAt && !row ? 4 * spacing * Math.abs(depthAt(q) - level) : 0);
+        if (d < best) { best = d; next = q; }
+      }
+      if (!next) break;
+      group.push(next);
+      plant(p, next, p.footprint, row);
+      mine.push(next);
+      kind.left--;
+    }
+    return true;
+  };
+  for (const kind of kinds.filter((x) => x.p.count !== undefined)) while (kind.left > 0 && driftOf(kind));
+  const shared = kinds.filter((x) => x.p.count === undefined);
+  for (let going = true; going;) {
+    going = false;
+    for (const kind of shared) if (kind.left > 0 && driftOf(kind)) going = true;
   }
+  for (const { p, left } of kinds) if (left > 0 && p.count !== undefined) short[p.productId] = left;
 
   // Shares aim at a cover, not a count: where the drifts left room, extend them until the zone is covered
   const byShare = order.filter((p) => p.count === undefined).sort((a, b) => (b.share ?? 1) - (a.share ?? 1));
@@ -236,8 +344,9 @@ export function planPlanting(poly: Pt[], plants: PlantChoice[], options: Plantin
     while (coverOf(poly, canopies) < coverage) {
       spots = spots.filter((q) => clear(q, p.footprint));
       if (spots.length === 0) break;
-      const next = spots.reduce((a, b) => (near(a, mine) <= near(b, mine) ? a : b));
-      plant(p.productId, next, p.footprint);
+      const cost = (q: Pt) => near(q, mine) + 6 * TOUCH * p.footprint * offDepth(q, p);
+      const next = spots.reduce((a, b) => (cost(a) <= cost(b) ? a : b));
+      plant(p, next, p.footprint, narrow(p.footprint));
       mine.push(next);
     }
   }
@@ -250,7 +359,7 @@ export function planPlanting(poly: Pt[], plants: PlantChoice[], options: Plantin
       for (let i = 0; i < n; i++) {
         const q = spots.find(ok);
         if (!q) break;
-        plant(p.productId, q, p.footprint);
+        plant(p, q, p.footprint, true);
       }
     }
     for (const p of order) {
