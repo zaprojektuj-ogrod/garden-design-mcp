@@ -66,6 +66,20 @@ jobs:
           tar xzf "$archive" mcp-publisher
           rm -f "$archive" "$archive.sigstore.json"
 
+      # npm lists a version some seconds after `npm publish` ends (2.16.3: 17 s after the registry asked);
+      # the registry checks the version's mcpName on npm, so wait until npm answers it
+      - name: Wait for the version on npm
+        run: |
+          name="$(node -p "require('./package.json').name")"
+          version="$(node -p "require('./package.json').version")"
+          mcp_name="$(node -p "require('./package.json').mcpName")"
+          for i in $(seq 1 30); do
+            if [ "$(npm view "$name@$version" mcpName 2>/dev/null)" = "$mcp_name" ]; then exit 0; fi
+            sleep 10
+          done
+          echo "::error::$name@$version with mcpName not on npm after 5 minutes"
+          exit 1
+
       - name: Sign in to the MCP Registry
         run: ./mcp-publisher login github-oidc
 
