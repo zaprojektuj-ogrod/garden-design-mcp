@@ -1,19 +1,31 @@
-# Publishes @zaprojektujogrod/mcp-server to npm via trusted publishing (OIDC) — no npm token.
+# Publishes @zaprojektujogrod/mcp-server to npm via trusted publishing (OIDC) — no npm token —
+# then lists that version on the MCP Registry (registry.modelcontextprotocol.io) from server.json,
+# signed in as this repository's organisation over GitHub OIDC (io.github.zaprojektuj-ogrod/*).
 # npm attaches provenance, as this repository is public.
-# Run by hand (Actions › Publish to npm › Run workflow) after the Garden Editor is deployed,
-# because changes to the bridge need the deployed editor first.
+# Run by hand (Actions › Publish to npm and the MCP Registry › Run workflow) after the Garden Editor
+# is deployed, because changes to the bridge need the deployed editor first. Bump the version in
+# package.json, package-lock.json and server.json together (a test in the Garden Editor checks it).
+# "registry only" skips npm: for a retry after the registry refused a fixed server.json, as npm
+# refuses to publish a version twice. A failed registry job alone is retried with "Re-run failed jobs".
+# The file name stays publish.yml: npm's trusted publisher is registered against it.
 # This repository is a mirror of mcp-server/ in the Garden Editor's own repository.
-name: Publish to npm
+name: Publish to npm and the MCP Registry
 
 on:
   workflow_dispatch:
+    inputs:
+      registry_only:
+        description: Skip npm, list the version already on npm in the MCP Registry
+        type: boolean
+        default: false
 
 permissions:
   contents: read
-  id-token: write  # OIDC token for npm trusted publishing
+  id-token: write  # OIDC token for npm trusted publishing and the MCP Registry login
 
 jobs:
-  publish:
+  npm:
+    if: ${{ !inputs.registry_only }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -23,3 +35,39 @@ jobs:
           registry-url: https://registry.npmjs.org
       - run: npm ci
       - run: npm publish --access public  # prepublishOnly builds
+
+  registry:
+    needs: npm
+    if: ${{ !cancelled() && (needs.npm.result == 'success' || needs.npm.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    env:
+      MCP_PUBLISHER_VERSION: v1.8.9  # pinned and its signature verified, as the registry's guide asks
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Download and verify mcp-publisher
+        run: |
+          set -euo pipefail
+          os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+          arch="$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')"
+          archive="mcp-publisher_${os}_${arch}.tar.gz"
+          base_url="https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}"
+
+          curl --fail --location --silent --show-error --output "$archive" "$base_url/$archive"
+          curl --fail --location --silent --show-error --output "$archive.sigstore.json" "$base_url/$archive.sigstore.json"
+          cosign verify-blob \
+            --bundle "$archive.sigstore.json" \
+            --certificate-identity "https://github.com/modelcontextprotocol/registry/.github/workflows/release.yml@refs/tags/${MCP_PUBLISHER_VERSION}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "$archive"
+          tar xzf "$archive" mcp-publisher
+          rm -f "$archive" "$archive.sigstore.json"
+
+      - name: Sign in to the MCP Registry
+        run: ./mcp-publisher login github-oidc
+
+      - name: List the version in the MCP Registry
+        run: ./mcp-publisher publish

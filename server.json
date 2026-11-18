@@ -1,0 +1,22 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.zaprojektuj-ogrod/garden-design-mcp",
+  "title": "Garden Editor",
+  "description": "Design a garden in 3D with your AI assistant: plot, zones, plants and buildings in Garden Editor",
+  "repository": {
+    "url": "https://github.com/zaprojektuj-ogrod/garden-design-mcp",
+    "source": "github"
+  },
+  "websiteUrl": "https://www.zaprojektuj-ogrod.pl/en/help/mcp-setup/",
+  "version": "2.16.3",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@zaprojektujogrod/mcp-server",
+      "version": "2.16.3",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}
