@@ -1,6 +1,7 @@
 // WebSocket client — connects to the browser's WebSocketBridge
 
 import { WebSocketServer, WebSocket } from "ws";
+import { mayConnect } from "./origins.js";
 
 // The editor always dials 3333; another port is for harnesses that proxy the
 // browser socket (e.g. eval runs beside an interactive session).
@@ -13,8 +14,17 @@ const pendingRequests = new Map<
 >();
 let requestId = 0;
 
-// Start WebSocket server for browser connections
-const wss = new WebSocketServer({ port: WS_PORT });
+// Start WebSocket server for browser connections: on this computer only, for the editor's
+// pages only (B77)
+const wss = new WebSocketServer({
+  host: "127.0.0.1",
+  port: WS_PORT,
+  verifyClient: ({ origin }: { origin?: string }, done: (ok: boolean, code?: number) => void) => {
+    if (mayConnect(origin)) return done(true);
+    console.error(`[MCP] Refused a connection from ${origin}: not the garden editor`);
+    done(false, 403);
+  },
+});
 
 wss.on("connection", (ws) => {
   console.error(`[MCP] Browser connected`);
@@ -51,7 +61,7 @@ wss.on("connection", (ws) => {
   });
 });
 
-console.error(`[MCP] WebSocket server listening on ws://localhost:${WS_PORT}`);
+console.error(`[MCP] WebSocket server listening on ws://127.0.0.1:${WS_PORT}`);
 
 /**
  * Send a command to the browser and wait for a response.
