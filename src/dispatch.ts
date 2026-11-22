@@ -486,6 +486,7 @@ export function createDispatcher(send: Send, designGuide: string) {
           let layout: "groups" | "row" | undefined;
           const short: Record<string, number> = {};
           const placedCount = new Map<string, number>();
+          let matM2 = 0;   // ground-cover mats (area of their ovals) placed in this bed
           for (const key of ["tree", "shrub", "ground", "any"]) {
             const group = byLayer.get(key);
             if (!group) continue;
@@ -496,6 +497,7 @@ export function createDispatcher(send: Send, designGuide: string) {
             for (const p of plan.placed) {
               const c = group.find((g) => g.productId === p.productId)!;
               placedCount.set(c.productId, (placedCount.get(c.productId) ?? 0) + 1);
+              if (c.form?.startsWith("groundcover")) matM2 += p.oval ? (Math.PI / 4) * p.oval.w * p.oval.d : (Math.PI / 4) * c.footprint ** 2;
               const r2 = (v: number) => Math.round(v * 100) / 100;
               objects.push(c.form && c.size
                 ? {
@@ -512,6 +514,10 @@ export function createDispatcher(send: Send, designGuide: string) {
           const cover = layeredCover(boundsOf(zone.poly), (q) => inside(q, zone.poly),
             plantsNow.map((c) => ({ kind: "circle" as const, x: c.x, y: c.y, diameter: c.footprint, heightM: c.heightM })));
           const r2 = (v: number) => Math.round(v * 100) / 100;
+          // Ground-cover mats are the exception (PO 2026-11-21): a tenth of a bed at most — said in the reply, measured
+          const bedM2 = Math.abs(zone.poly.reduce((a, q, i) => { const n = zone.poly[(i + 1) % zone.poly.length]; return a + (q.x * n.y - n.x * q.y); }, 0)) / 2;
+          const matShare = bedM2 > 0 ? matM2 / bedM2 : 0;
+          if (matShare > 0.1) warnings.push(`ground-cover mats cover ${Math.round(matShare * 100)} % of this bed (${Math.round(matM2)} of ${Math.round(bedM2)} m²): a tenth at most — only under trees in shade, at the front edge or to close a gap, never under shrubs of 0.6 m and more; redo with \`replace: true\` and no or a small ground-cover share`);
           const nameOf = (key: string) => choices.find((c) => c.productId === key)?.form ?? key;
           report.push({
             zoneId: zone.id,
@@ -525,6 +531,7 @@ export function createDispatcher(send: Send, designGuide: string) {
             ],
             // counted once where plants overlap; each height layer on its own
             cover: r2(cover.cover),
+            ...(matM2 > 0 ? { groundCoverShare: r2(matShare) } : {}),
             ...(sized ? { coverByLayer: { ground: r2(cover.layers.ground), shrub: r2(cover.layers.shrub), tree: r2(cover.layers.tree) } } : {}),
             ...(Object.keys(short).length ? { short: Object.fromEntries(Object.entries(short).map(([k, v]) => [nameOf(k), v])) } : {}),
             ...(missing.length ? { missing } : {}),

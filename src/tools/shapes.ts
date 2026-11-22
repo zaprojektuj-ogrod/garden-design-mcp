@@ -28,11 +28,12 @@ export const tools: Tool[] = [
     description:
       "Swap generic plant shapes for species once the designer has signed off the layout: each species stands in its shapes' place at its own catalog size — " +
       "one plant for a tree, shrub or clump; a row half its spread apart along a hedge; plants at their density over a ground-cover mat (which can also take a `mix` of species, neighbours differing) or a drift. " +
-      "The whole call is one undo step. `differs` says where a species' size is outside its shape's. " +
+      "The whole call is one undo step. A species far from its shape's size, or one species planting over about a tenth of the plants, holds the whole call back (`needsAcknowledgement`: nothing is swapped): tell the designer, then call again with `acknowledged: true`. `differs` says where a species' size is outside its shape's. " +
       "Show the design before and after and ask the designer to approve; if they don't, `undo` brings the shapes back.",
     inputSchema: {
       type: "object" as const,
       properties: {
+        acknowledged: { type: "boolean", description: "The designer has been told about the species far off their shapes' size, or planting over a tenth of the garden, and agreed (see needsAcknowledgement)" },
         swaps: {
           type: "array",
           items: {
